@@ -11,6 +11,8 @@ static ifont *buttonFont = NULL;
 // Window dimensions
 static const int WIN_WIDTH = 600;
 static const int WIN_HEIGHT = 500;
+static int winX = 0;
+static int winY = 0;
 
 // UI element areas (relative to window)
 static irect settingsButton;
@@ -28,24 +30,30 @@ void initUI() {
     textFont = OpenFont("LiberationSans", 20, 1);
     buttonFont = OpenFont("LiberationSans", 20, 1);
     
-    // Define status box
-    statusBox.x = 40;
-    statusBox.y = 200;
+    // Calculate window position (centered)
+    int screenW = ScreenWidth();
+    int screenH = ScreenHeight();
+    winX = (screenW - WIN_WIDTH) / 2;
+    winY = (screenH - WIN_HEIGHT) / 2;
+    
+    // Define status box (relative to window)
+    statusBox.x = winX + 40;
+    statusBox.y = winY + 200;
     statusBox.w = WIN_WIDTH - 80;
     statusBox.h = 70;
     
-    // Define buttons
+    // Define buttons (relative to window)
     int buttonWidth = 220;
     int buttonHeight = 60;
-    int buttonY = WIN_HEIGHT - buttonHeight - 40;
+    int buttonY = winY + WIN_HEIGHT - buttonHeight - 40;
     int spacing = (WIN_WIDTH - 2 * buttonWidth) / 3;
     
-    settingsButton.x = spacing;
+    settingsButton.x = winX + spacing;
     settingsButton.y = buttonY;
     settingsButton.w = buttonWidth;
     settingsButton.h = buttonHeight;
     
-    exitButton.x = spacing * 2 + buttonWidth;
+    exitButton.x = winX + spacing * 2 + buttonWidth;
     exitButton.y = buttonY;
     exitButton.w = buttonWidth;
     exitButton.h = buttonHeight;
@@ -57,7 +65,6 @@ void drawConnectionIndicator(int x, int y, int size, bool connected) {
         FillArea(x, y, size, size, BLACK);
     } else {
         DrawRect(x, y, size, size, BLACK);
-        // Draw inner rect to make it hollow
         FillArea(x + 2, y + 2, size - 4, size - 4, WHITE);
     }
 }
@@ -76,20 +83,23 @@ void drawButton(irect *rect, const char *text) {
 
 // Draw window content
 void drawWindow() {
-    ClearScreen();
+    // Draw window background
+    FillArea(winX, winY, WIN_WIDTH, WIN_HEIGHT, WHITE);
+    DrawRect(winX, winY, WIN_WIDTH, WIN_HEIGHT, BLACK);
+    DrawRect(winX + 1, winY + 1, WIN_WIDTH - 2, WIN_HEIGHT - 2, BLACK);
     
     // Draw title
     SetFont(titleFont, BLACK);
     const char *title = "Pocketbook Companion";
     int titleWidth = StringWidth(title);
-    DrawString((WIN_WIDTH - titleWidth) / 2, 40, title);
+    DrawString(winX + (WIN_WIDTH - titleWidth) / 2, winY + 40, title);
     
     // Draw separator line
-    DrawLine(40, 90, WIN_WIDTH - 40, 90, BLACK);
+    DrawLine(winX + 40, winY + 90, winX + WIN_WIDTH - 40, winY + 90, BLACK);
     
     // Draw connection status
-    int indicatorX = 60;
-    int indicatorY = 130;
+    int indicatorX = winX + 60;
+    int indicatorY = winY + 130;
     int indicatorSize = 20;
     
     drawConnectionIndicator(indicatorX, indicatorY, indicatorSize, isConnected);
@@ -108,8 +118,6 @@ void drawWindow() {
     // Draw buttons
     drawButton(&settingsButton, "Настройки");
     drawButton(&exitButton, "Выход");
-    
-    PartialUpdate(0, 0, WIN_WIDTH, WIN_HEIGHT);
 }
 
 // Window event handler
@@ -117,10 +125,13 @@ int windowHandler(int type, int par1, int par2) {
     switch (type) {
         case EVT_INIT:
             initUI();
+            drawWindow();
+            FullUpdate();
             break;
             
         case EVT_SHOW:
             drawWindow();
+            FullUpdate();
             break;
             
         case EVT_EXIT:
@@ -138,6 +149,7 @@ int windowHandler(int type, int par1, int par2) {
                 y >= settingsButton.y && y <= settingsButton.y + settingsButton.h) {
                 strncpy(statusText, "Настройки (в разработке)", sizeof(statusText) - 1);
                 drawWindow();
+                PartialUpdate(winX, winY, WIN_WIDTH, WIN_HEIGHT);
             }
             
             // Check Exit button
@@ -154,14 +166,9 @@ int windowHandler(int type, int par1, int par2) {
 
 // Application entry point
 int main(int argc, char *argv[]) {
-    // Center window on screen
-    int screenW = ScreenWidth();
-    int screenH = ScreenHeight();
-    int winX = (screenW - WIN_WIDTH) / 2;
-    int winY = (screenH - WIN_HEIGHT) / 2;
-    
-    // Create windowed application
-    CreateWin(winX, winY, WIN_WIDTH, WIN_HEIGHT, "calibre-companion", windowHandler);
+    // Open as panel (non-fullscreen)
+    OpenScreen();
+    InkViewMain(windowHandler);
     
     return 0;
 }
