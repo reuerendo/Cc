@@ -1,0 +1,56 @@
+name: Build Calibre Companion
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        submodules: recursive
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake build-essential git
+    
+    - name: Clone PocketBook SDK
+      run: |
+        mkdir -p SDK
+        cd SDK
+        git clone --depth 1 --branch 5.19 https://github.com/pocketbook/SDK_6.3.0.git
+    
+    - name: Create build directory
+      run: mkdir -p build
+    
+    - name: Configure CMake
+      run: |
+        cd build
+        cmake .. -DCMAKE_TOOLCHAIN_FILE=../toolchain.cmake
+    
+    - name: Build
+      run: |
+        cd build
+        cmake --build . --config Release
+    
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: calibre-companion
+        path: build/calibre-companion.app
+        
+    - name: Create release on tag
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: build/calibre-companion.app
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
