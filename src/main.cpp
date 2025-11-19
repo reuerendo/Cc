@@ -240,12 +240,23 @@ void openKeyboardForField(int fieldIndex) {
 
 // Select folder using file chooser
 void selectFolder() {
-    // Use OpenDirDialog instead of OpenFileDialog for folder selection
-    char *selectedPath = OpenDirDialog(settings.inputFolder, NULL);
+    // OpenFileDialog returns full file path, extract directory from it
+    char *selectedPath = OpenFileDialog(settings.inputFolder, "epub;pdf;mobi;azw3", 0, NULL);
     
     if (selectedPath != NULL) {
-        strncpy(settings.inputFolder, selectedPath, sizeof(settings.inputFolder) - 1);
+        // Extract directory path
+        char dirPath[256];
+        strncpy(dirPath, selectedPath, sizeof(dirPath) - 1);
+        dirPath[sizeof(dirPath) - 1] = '\0';
+        
+        char *lastSlash = strrchr(dirPath, '/');
+        if (lastSlash != NULL) {
+            *lastSlash = '\0';
+        }
+        
+        strncpy(settings.inputFolder, dirPath, sizeof(settings.inputFolder) - 1);
         settings.inputFolder[sizeof(settings.inputFolder) - 1] = '\0';
+        
         drawSettings();
     }
 }
