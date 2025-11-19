@@ -68,6 +68,109 @@ int showDialog(PBDialogIcon icon, const char* text, const char* buttons[], int b
     return WEXITSTATUS(status);
 }
 
+// Settings menu handlers
+static imenu settingsMenuItems[] = {
+    { ITEM_ACTIVE, 0, "IP адрес", NULL },
+    { ITEM_ACTIVE, 1, "Порт", NULL },
+    { ITEM_ACTIVE, 2, "Пароль", NULL },
+    { ITEM_ACTIVE, 3, "Read column", NULL },
+    { ITEM_ACTIVE, 4, "Read date column", NULL },
+    { ITEM_ACTIVE, 5, "Favorite column", NULL },
+    { ITEM_ACTIVE, 6, "Input folder", NULL },
+    { 0, 0, NULL, NULL }
+};
+
+// Keyboard handler for IP
+static void ipKeyboardHandler(char* text) {
+    if (text != NULL) {
+        strncpy(settingsIP, text, sizeof(settingsIP) - 1);
+        settingsIP[sizeof(settingsIP) - 1] = '\0';
+    }
+}
+
+// Keyboard handler for Port
+static void portKeyboardHandler(char* text) {
+    if (text != NULL) {
+        strncpy(settingsPort, text, sizeof(settingsPort) - 1);
+        settingsPort[sizeof(settingsPort) - 1] = '\0';
+    }
+}
+
+// Keyboard handler for Password
+static void passwordKeyboardHandler(char* text) {
+    if (text != NULL) {
+        strncpy(settingsPassword, text, sizeof(settingsPassword) - 1);
+        settingsPassword[sizeof(settingsPassword) - 1] = '\0';
+    }
+}
+
+// Keyboard handler for Read column
+static void readColumnKeyboardHandler(char* text) {
+    if (text != NULL) {
+        strncpy(settingsReadColumn, text, sizeof(settingsReadColumn) - 1);
+        settingsReadColumn[sizeof(settingsReadColumn) - 1] = '\0';
+    }
+}
+
+// Keyboard handler for Read date column
+static void readDateColumnKeyboardHandler(char* text) {
+    if (text != NULL) {
+        strncpy(settingsReadDateColumn, text, sizeof(settingsReadDateColumn) - 1);
+        settingsReadDateColumn[sizeof(settingsReadDateColumn) - 1] = '\0';
+    }
+}
+
+// Keyboard handler for Favorite column
+static void favoriteColumnKeyboardHandler(char* text) {
+    if (text != NULL) {
+        strncpy(settingsFavoriteColumn, text, sizeof(settingsFavoriteColumn) - 1);
+        settingsFavoriteColumn[sizeof(settingsFavoriteColumn) - 1] = '\0';
+    }
+}
+
+// Keyboard handler for Input folder
+static void inputFolderKeyboardHandler(char* text) {
+    if (text != NULL) {
+        strncpy(settingsInputFolder, text, sizeof(settingsInputFolder) - 1);
+        settingsInputFolder[sizeof(settingsInputFolder) - 1] = '\0';
+    }
+}
+
+// Settings menu item handler
+static int settingsMenuHandler(int index) {
+    switch (index) {
+        case 0: // IP адрес
+            OpenKeyboard("IP адрес", settingsIP, 63, KBD_NORMAL, ipKeyboardHandler);
+            break;
+            
+        case 1: // Порт
+            OpenKeyboard("Порт", settingsPort, 15, KBD_NORMAL, portKeyboardHandler);
+            break;
+            
+        case 2: // Пароль
+            OpenKeyboard("Пароль", settingsPassword, 63, KBD_PASSWORD, passwordKeyboardHandler);
+            break;
+            
+        case 3: // Read column
+            OpenKeyboard("Read column", settingsReadColumn, 63, KBD_NORMAL, readColumnKeyboardHandler);
+            break;
+            
+        case 4: // Read date column
+            OpenKeyboard("Read date column", settingsReadDateColumn, 63, KBD_NORMAL, readDateColumnKeyboardHandler);
+            break;
+            
+        case 5: // Favorite column
+            OpenKeyboard("Favorite column", settingsFavoriteColumn, 63, KBD_NORMAL, favoriteColumnKeyboardHandler);
+            break;
+            
+        case 6: // Input folder
+            OpenKeyboard("Input folder", settingsInputFolder, 255, KBD_NORMAL, inputFolderKeyboardHandler);
+            break;
+    }
+    
+    return 0;
+}
+
 // Show main menu
 void showMainMenu() {
     const char* buttons[] = { "Настройки", "Выход" };
@@ -96,53 +199,30 @@ void showMainMenu() {
 
 // Show settings menu
 void showSettingsMenu() {
-    // Input IP
-    OpenKeyboard("IP адрес", settingsIP, 63, KBD_NORMAL, NULL);
+    // Update menu items with current values
+    char ipText[128], portText[128], passwordText[128];
+    char readColumnText[128], readDateColumnText[128];
+    char favoriteColumnText[128], inputFolderText[300];
     
-    // Input Port
-    OpenKeyboard("Порт", settingsPort, 15, KBD_NORMAL, NULL);
+    snprintf(ipText, sizeof(ipText), "IP адрес: %s", settingsIP);
+    snprintf(portText, sizeof(portText), "Порт: %s", settingsPort);
+    snprintf(passwordText, sizeof(passwordText), "Пароль: %s", 
+             settingsPassword[0] != '\0' ? "***" : "(не установлен)");
+    snprintf(readColumnText, sizeof(readColumnText), "Read column: %s", settingsReadColumn);
+    snprintf(readDateColumnText, sizeof(readDateColumnText), "Read date column: %s", settingsReadDateColumn);
+    snprintf(favoriteColumnText, sizeof(favoriteColumnText), "Favorite column: %s", settingsFavoriteColumn);
+    snprintf(inputFolderText, sizeof(inputFolderText), "Input folder: %s", settingsInputFolder);
     
-    // Input Password
-    OpenKeyboard("Пароль", settingsPassword, 63, KBD_PASSWORD, NULL);
+    settingsMenuItems[0].text = ipText;
+    settingsMenuItems[1].text = portText;
+    settingsMenuItems[2].text = passwordText;
+    settingsMenuItems[3].text = readColumnText;
+    settingsMenuItems[4].text = readDateColumnText;
+    settingsMenuItems[5].text = favoriteColumnText;
+    settingsMenuItems[6].text = inputFolderText;
     
-    // Input Read column
-    OpenKeyboard("Read column", settingsReadColumn, 63, KBD_NORMAL, NULL);
-    
-    // Input Read date column
-    OpenKeyboard("Read date column", settingsReadDateColumn, 63, KBD_NORMAL, NULL);
-    
-    // Input Favorite column
-    OpenKeyboard("Favorite column", settingsFavoriteColumn, 63, KBD_NORMAL, NULL);
-    
-    // Input folder
-    OpenKeyboard("Input folder", settingsInputFolder, 255, KBD_NORMAL, NULL);
-    
-    // Show confirmation dialog
-    const char* buttons[] = { "Сохранить" };
-    
-    char confirmText[1024];
-    snprintf(confirmText, sizeof(confirmText),
-        "Настройки:\n\n"
-        "IP адрес: %s\n"
-        "Порт: %s\n"
-        "Пароль: %s\n"
-        "Read column: %s\n"
-        "Read date column: %s\n"
-        "Favorite column: %s\n"
-        "Input folder: %s",
-        settingsIP,
-        settingsPort,
-        settingsPassword[0] != '\0' ? "***" : "(не установлен)",
-        settingsReadColumn,
-        settingsReadDateColumn,
-        settingsFavoriteColumn,
-        settingsInputFolder
-    );
-    
-    showDialog(PB_ICON_INFO, confirmText, buttons, 1);
-    
-    // Return to main menu
-    showMainMenu();
+    // Show menu
+    OpenMenu(settingsMenuItems, settingsMenuHandler, NULL, showMainMenu);
 }
 
 // Application entry point
