@@ -46,7 +46,6 @@ struct FieldInfo {
 
 static FieldInfo fieldInfo[FIELD_COUNT];
 static int currentField = -1;
-static imenu *currentMenu = NULL;
 
 void initFieldInfo() {
     fieldInfo[FIELD_IP] = {"IP адрес:", settings.ip, sizeof(settings.ip), false};
@@ -113,7 +112,7 @@ void saveSettings() {
 
 // Forward declarations
 void showSettingsPanel();
-void showMainMenu();
+void showMainDialog();
 
 // Callback для ввода текста
 void keyboardCallback(char *text) {
@@ -137,186 +136,177 @@ void folderCallback(char *path) {
 // SETTINGS PANEL
 // ============================================================================
 
-void settingsMenuHandler(int index) {
-    // Menu closes automatically when handler is called
-    
-    if (currentMenu) {
-        for (int i = 0; i < FIELD_COUNT; i++) {
-            if (currentMenu[i].text) {
-                free((void*)currentMenu[i].text);
-            }
-        }
-        free(currentMenu);
-        currentMenu = NULL;
-    }
-    
-    if (index == -1) {
-        // Cancel
-        showMainMenu();
-        return;
-    }
-    
-    if (index == 1000) {
-        // Save
+void settingsPanelHandler(int button) {
+    if (button == 1) {
+        // Save button
         saveSettings();
-        showMainMenu();
-        return;
     }
-    
-    // Edit field
-    if (index >= 0 && index < FIELD_COUNT) {
-        currentField = index;
-        
-        if (fieldInfo[index].isFolder) {
-            char buffer[256];
-            strncpy(buffer, fieldInfo[index].value, sizeof(buffer) - 1);
-            buffer[sizeof(buffer) - 1] = '\0';
-            OpenDirectorySelector("Выберите папку", buffer, sizeof(buffer), folderCallback);
-        } else {
-            char buffer[256];
-            strncpy(buffer, fieldInfo[index].value, sizeof(buffer) - 1);
-            buffer[sizeof(buffer) - 1] = '\0';
-            
-            int keyboardType = (index == FIELD_PORT) ? KBD_NUMERIC : KBD_NORMAL;
-            OpenKeyboard(fieldInfo[index].label, buffer, fieldInfo[index].maxLen - 1, keyboardType, keyboardCallback);
-        }
-    }
+    // Dialog closes automatically, return to main dialog
+    showMainDialog();
 }
 
 void showSettingsPanel() {
-    currentMenu = (imenu*)calloc(FIELD_COUNT + 2, sizeof(imenu));
-    int menuIndex = 0;
+    char buffer[2048];
+    int offset = 0;
     
-    // Add settings fields
-    for (int i = 0; i < FIELD_COUNT; i++) {
-        char buffer[512];
-        
-        if (i == FIELD_PASSWORD && strlen(fieldInfo[i].value) > 0) {
-            char masked[128];
-            int len = strlen(fieldInfo[i].value);
-            for (int j = 0; j < len && j < 127; j++) {
-                masked[j] = '*';
-            }
-            masked[len] = '\0';
-            snprintf(buffer, sizeof(buffer), "%s %s", fieldInfo[i].label, masked);
-        } else {
-            snprintf(buffer, sizeof(buffer), "%s %s", fieldInfo[i].label, fieldInfo[i].value);
+    // Build settings text
+    offset += snprintf(buffer + offset, sizeof(buffer) - offset, 
+                      "IP адрес: %s\n\n", settings.ip);
+    offset += snprintf(buffer + offset, sizeof(buffer) - offset, 
+                      "Порт: %s\n\n", settings.port);
+    
+    // Mask password
+    if (strlen(settings.password) > 0) {
+        char masked[128];
+        int len = strlen(settings.password);
+        for (int j = 0; j < len && j < 127; j++) {
+            masked[j] = '*';
         }
+        masked[len] = '\0';
+        offset += snprintf(buffer + offset, sizeof(buffer) - offset, 
+                          "Пароль: %s\n\n", masked);
+    } else {
+        offset += snprintf(buffer + offset, sizeof(buffer) - offset, 
+                          "Пароль: \n\n");
+    }
+    
+    offset += snprintf(buffer + offset, sizeof(buffer) - offset, 
+                      "Read column: %s\n\n", settings.readColumn);
+    offset += snprintf(buffer + offset, sizeof(buffer) - offset, 
+                      "Read date column: %s\n\n", settings.readDateColumn);
+    offset += snprintf(buffer + offset, sizeof(buffer) - offset, 
+                      "Favorite column: %s\n\n", settings.favoriteColumn);
+    offset += snprintf(buffer + offset, sizeof(buffer) - offset, 
+                      "Input folder: %s", settings.inputFolder);
+    
+    Dialog(ICON_INFORMATION, "Настройки", buffer, "OK", "Отмена", settingsPanelHandler);
+}
+
+// ============================================================================
+// MAIN DIALOG
+// ============================================================================
+
+static ifont *titleFont = NULL;
+static ifont *textFont = NULL;
+static int panelX, panelY, panelW, panelH;
+
+void drawMainPanel() {
+    int screenW = ScreenWidth();
+    int screenH = ScreenHeight();
+    
+    // Calculate panel dimensions (60% of screen width, auto height)
+    panelW = (screenW * 60) / 100;
+    panelH = screenH / 3;
+    panelX = (screenW - panelW) / 2;
+    panelY = (screenH - panelH) / 2;
+    
+    // Clear screen
+    ClearScreen();
+    
+    // Draw panel background
+    SetColor(WHITE);
+    FillArea(panelX, panelY, panelW, panelH, WHITE);
+    
+    // Draw panel border
+    SetColor(BLACK);
+    DrawRect(panelX, panelY, panelW, panelH, BLACK);
+    
+    // Calculate positions
+    int titleY = panelY + 60;
+    int iconY = panelY + 20;
+    int iconSize = 48;
+    int settingsIconX = panelX + panelW - iconSize - 70;
+    int closeIconX = panelX + panelW - iconSize - 20;
+    
+    // Draw title
+    if (!titleFont) {
+        titleFont = OpenFont("LiberationSans-Bold", 32, 1);
+    }
+    if (titleFont) {
+        SetFont(titleFont, BLACK);
+        int titleW = StringWidth("Pocketbook Companion");
+        DrawString((screenW - titleW) / 2, titleY, "Pocketbook Companion");
+    }
+    
+    // Draw settings icon (gear symbol using text)
+    if (!textFont) {
+        textFont = OpenFont("LiberationSans", iconSize, 1);
+    }
+    if (textFont) {
+        SetFont(textFont, BLACK);
+        DrawString(settingsIconX, iconY + iconSize, "⚙");
         
-        currentMenu[menuIndex].type = ITEM_ACTIVE;
-        currentMenu[menuIndex].text = strdup(buffer);
-        currentMenu[menuIndex].index = i;
-        menuIndex++;
+        // Draw close icon (X symbol)
+        DrawString(closeIconX, iconY + iconSize, "✕");
     }
     
-    // Separator
-    currentMenu[menuIndex].type = ITEM_SEPARATOR;
-    currentMenu[menuIndex].text = NULL;
-    menuIndex++;
-    
-    // Save button
-    currentMenu[menuIndex].type = ITEM_ACTIVE;
-    currentMenu[menuIndex].text = (char*)"Сохранить";
-    currentMenu[menuIndex].index = 1000;
-    menuIndex++;
-    
-    OpenMenu(currentMenu, 0, 0, 0, settingsMenuHandler);
-}
-
-// ============================================================================
-// MAIN MENU
-// ============================================================================
-
-static bool isConnected = false;
-
-void mainMenuHandler(int index) {
-    // Menu closes automatically when handler is called
-    
-    if (currentMenu) {
-        free(currentMenu);
-        currentMenu = NULL;
+    // Add status text
+    const char* statusText = "Статус: Не подключено";
+    if (textFont) {
+        SetFont(textFont, DGRAY);
+        int statusW = StringWidth(statusText);
+        DrawString((screenW - statusW) / 2, titleY + 80, statusText);
     }
     
-    switch (index) {
-        case 1:
-            // Sync
-            Message(ICON_INFORMATION, "Синхронизация", "Функция в разработке", 1500);
-            showMainMenu();
-            break;
-            
-        case 2:
-            // Settings
-            showSettingsPanel();
-            break;
-            
-        case 3:
-            // Exit
-            CloseApp();
-            break;
-            
-        default:
-            // Cancel
-            CloseApp();
-            break;
-    }
+    FullUpdate();
 }
 
-void showMainMenu() {
-    currentMenu = (imenu*)calloc(4, sizeof(imenu));
-    int menuIndex = 0;
-    
-    // Header
-    char statusText[512];
-    snprintf(statusText, sizeof(statusText), 
-        "Pocketbook Companion\n\nСтатус: %s", 
-        isConnected ? "Подключено" : "Не подключено");
-    
-    currentMenu[menuIndex].type = ITEM_HEADER;
-    currentMenu[menuIndex].text = statusText;
-    menuIndex++;
-    
-    // Sync
-    currentMenu[menuIndex].type = ITEM_ACTIVE;
-    currentMenu[menuIndex].text = (char*)"Синхронизация";
-    currentMenu[menuIndex].index = 1;
-    menuIndex++;
-    
-    // Settings
-    currentMenu[menuIndex].type = ITEM_ACTIVE;
-    currentMenu[menuIndex].text = (char*)"Настройки";
-    currentMenu[menuIndex].index = 2;
-    menuIndex++;
-    
-    // Exit
-    currentMenu[menuIndex].type = ITEM_ACTIVE;
-    currentMenu[menuIndex].text = (char*)"Выход";
-    currentMenu[menuIndex].index = 3;
-    menuIndex++;
-    
-    OpenMenu(currentMenu, 0, 0, 0, mainMenuHandler);
-}
-
-// ============================================================================
-// MAIN APPLICATION
-// ============================================================================
-
-static int mainEventHandler(int type, int par1, int par2) {
+int mainPanelHandler(int type, int par1, int par2) {
     switch (type) {
         case EVT_INIT:
-            loadSettings();
-            initFieldInfo();
-            showMainMenu();
+            drawMainPanel();
             break;
             
         case EVT_SHOW:
-            showMainMenu();
+            drawMainPanel();
+            break;
+            
+        case EVT_POINTERUP: {
+            // Check if settings icon was clicked
+            int iconSize = 48;
+            int settingsIconX = panelX + panelW - iconSize - 70;
+            int closeIconX = panelX + panelW - iconSize - 20;
+            int iconY = panelY + 20;
+            
+            if (par1 >= settingsIconX && par1 <= settingsIconX + iconSize &&
+                par2 >= iconY && par2 <= iconY + iconSize) {
+                // Settings icon clicked
+                showSettingsPanel();
+                return 1;
+            }
+            
+            if (par1 >= closeIconX && par1 <= closeIconX + iconSize &&
+                par2 >= iconY && par2 <= iconY + iconSize) {
+                // Close icon clicked
+                CloseApp();
+                return 1;
+            }
+            break;
+        }
+        
+        case EVT_KEYPRESS:
+            if (par1 == KEY_BACK || par1 == KEY_HOME) {
+                CloseApp();
+                return 1;
+            }
             break;
     }
     
     return 0;
 }
 
+void showMainDialog() {
+    SetEventHandler(mainPanelHandler);
+    drawMainPanel();
+}
+
+// ============================================================================
+// MAIN APPLICATION
+// ============================================================================
+
 int main(int argc, char *argv[]) {
-    InkViewMain(mainEventHandler);
+    loadSettings();
+    initFieldInfo();
+    InkViewMain(mainPanelHandler);
     return 0;
 }
