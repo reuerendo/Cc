@@ -1,174 +1,144 @@
 #include "inkview.h"
 #include <string.h>
+#include <stdlib.h>
 
 // Application state
 static bool isConnected = false;
-static char statusText[256] = "Ожидание подключения...";
-static ifont *titleFont = NULL;
-static ifont *textFont = NULL;
-static ifont *buttonFont = NULL;
+static char statusText[512] = "Ожидание подключения к Calibre...\n\nПриложение готово к работе.";
 
-// Window dimensions
-static const int WIN_WIDTH = 600;
-static const int WIN_HEIGHT = 500;
-static int winX = 0;
-static int winY = 0;
+// System dialog path
+static const char* DIALOG_PATH = "/ebrmain/bin/dialog";
 
-// UI element areas (relative to window)
-static irect settingsButton;
-static irect exitButton;
-static irect statusBox;
+// Dialog icons
+enum DialogIcon {
+    ICON_NONE = 0,
+    ICON_INFO = 1,
+    ICON_QUESTION = 2,
+    ICON_ATTENTION = 3,
+    ICON_ERROR = 4,
+    ICON_WLAN = 5
+};
 
-// Forward declarations
-static void drawWindow();
-static int windowHandler(int type, int par1, int par2);
-
-// Initialize UI elements
-void initUI() {
-    // Load fonts
-    titleFont = OpenFont("LiberationSans-Bold", 28, 1);
-    textFont = OpenFont("LiberationSans", 20, 1);
-    buttonFont = OpenFont("LiberationSans", 20, 1);
+// Show system dialog
+int showDialog(DialogIcon icon, const char* text, const char* buttons[], int buttonCount) {
+    // Build command arguments
+    char iconStr[8];
+    snprintf(iconStr, sizeof(iconStr), "%d", icon);
     
-    // Calculate window position (centered)
-    int screenW = ScreenWidth();
-    int screenH = ScreenHeight();
-    winX = (screenW - WIN_WIDTH) / 2;
-    winY = (screenH - WIN_HEIGHT) / 2;
+    // Allocate arguments array
+    char** args = (char**)malloc(sizeof(char*) * (buttonCount + 4));
+    args[0] = (char*)DIALOG_PATH;
+    args[1] = iconStr;
+    args[2] = (char*)"";  // title (empty)
+    args[3] = (char*)text;
     
-    // Define status box (relative to window)
-    statusBox.x = winX + 40;
-    statusBox.y = winY + 200;
-    statusBox.w = WIN_WIDTH - 80;
-    statusBox.h = 70;
+    for (int i = 0; i < buttonCount; i++) {
+        args[4 + i] = (char*)buttons[i];
+    }
+    args[4 + buttonCount] = NULL;
     
-    // Define buttons (relative to window)
-    int buttonWidth = 220;
-    int buttonHeight = 60;
-    int buttonY = winY + WIN_HEIGHT - buttonHeight - 40;
-    int spacing = (WIN_WIDTH - 2 * buttonWidth) / 3;
+    // Execute dialog
+    int pid = fork();
+    if (pid == 0) {
+        execv(DIALOG_PATH, args);
+        exit(-1);
+    }
     
-    settingsButton.x = winX + spacing;
-    settingsButton.y = buttonY;
-    settingsButton.w = buttonWidth;
-    settingsButton.h = buttonHeight;
+    int status = 0;
+    if (pid > 0) {
+        waitpid(pid, &status, 0);
+    }
     
-    exitButton.x = winX + spacing * 2 + buttonWidth;
-    exitButton.y = buttonY;
-    exitButton.w = buttonWidth;
-    exitButton.h = buttonHeight;
+    free(args);
+    return WEXITSTATUS(status);
 }
 
-// Draw connection indicator
-void drawConnectionIndicator(int x, int y, int size, bool connected) {
-    if (connected) {
-        FillArea(x, y, size, size, BLACK);
+// Show main menu
+void showMainMenu() {
+    const char* buttons[] = { "Выход", "Настройки", "Обновить" };
+    
+    char menuText[1024];
+    snprintf(menuText, sizeof(menuText),
+        "Pocketbook Companion\n\n"
+        "Статус: %s\n\n"
+        "%s",
+        isConnected ? "Подключено" : "Не подключено",
+        statusText
+    );
+    
+    int result = showDialog(ICON_INFO, menuText, buttons, 3);
+    
+    switch (result) {
+        case 1:  // Выход
+            CloseApp();
+            break;
+            
+        case 2:  // Настройки
+            showSettingsMenu();
+            break;
+            
+        case 3:  // Обновить
+            // Здесь логика обновления статуса
+            strncpy(statusText, "Проверка подключения...", sizeof(statusText) - 1);
+            showMainMenu();
+            break;
+    }
+}
+
+// Show settings menu
+void showSettingsMenu() {
+    const char* buttons[] = { "Назад", "IP адрес", "Порт" };
+    
+    int result = showDialog(
+        ICON_NONE,
+        "Настройки подключения\n\n"
+        "IP адрес: 192.168.1.100\n"
+        "Порт: 8080\n\n"
+        "Выберите параметр для изменения:",
+        buttons,
+        3
+    );
+    
+    if (result == 1) {
+        showMainMenu();
+    } else if (result == 2) {
+        // Редактирование IP
+        showMainMenu();
+    } else if (result == 3) {
+        // Редактирование порта
+        showMainMenu();
+    }
+}
+
+// Show initial confirmation
+void showInitialDialog() {
+    const char* buttons[] = { "Отмена", "Продолжить" };
+    
+    int result = showDialog(
+        ICON_QUESTION,
+        "Pocketbook Companion\n\n"
+        "Это приложение позволяет синхронизировать\n"
+        "вашу библиотеку с Calibre.\n\n"
+        "Продолжить?",
+        buttons,
+        2
+    );
+    
+    if (result == 1) {
+        // Отмена
+        CloseApp();
     } else {
-        DrawRect(x, y, size, size, BLACK);
-        FillArea(x + 2, y + 2, size - 4, size - 4, WHITE);
+        // Продолжить - показать главное меню
+        showMainMenu();
     }
-}
-
-// Draw a button
-void drawButton(irect *rect, const char *text) {
-    DrawRect(rect->x, rect->y, rect->w, rect->h, BLACK);
-    DrawRect(rect->x + 1, rect->y + 1, rect->w - 2, rect->h - 2, BLACK);
-    
-    SetFont(buttonFont, BLACK);
-    int textWidth = StringWidth(text);
-    int textX = rect->x + (rect->w - textWidth) / 2;
-    int textY = rect->y + (rect->h - 20) / 2;
-    DrawString(textX, textY, text);
-}
-
-// Draw window content
-void drawWindow() {
-    // Draw window background
-    FillArea(winX, winY, WIN_WIDTH, WIN_HEIGHT, WHITE);
-    DrawRect(winX, winY, WIN_WIDTH, WIN_HEIGHT, BLACK);
-    DrawRect(winX + 1, winY + 1, WIN_WIDTH - 2, WIN_HEIGHT - 2, BLACK);
-    
-    // Draw title
-    SetFont(titleFont, BLACK);
-    const char *title = "Pocketbook Companion";
-    int titleWidth = StringWidth(title);
-    DrawString(winX + (WIN_WIDTH - titleWidth) / 2, winY + 40, title);
-    
-    // Draw separator line
-    DrawLine(winX + 40, winY + 90, winX + WIN_WIDTH - 40, winY + 90, BLACK);
-    
-    // Draw connection status
-    int indicatorX = winX + 60;
-    int indicatorY = winY + 130;
-    int indicatorSize = 20;
-    
-    drawConnectionIndicator(indicatorX, indicatorY, indicatorSize, isConnected);
-    
-    SetFont(textFont, BLACK);
-    const char *connText = isConnected ? "Подключено к Calibre" : "Нет подключения";
-    DrawString(indicatorX + indicatorSize + 15, indicatorY, connText);
-    
-    // Draw status box
-    DrawRect(statusBox.x, statusBox.y, statusBox.w, statusBox.h, BLACK);
-    DrawRect(statusBox.x + 2, statusBox.y + 2, statusBox.w - 4, statusBox.h - 4, BLACK);
-    
-    SetFont(textFont, BLACK);
-    DrawString(statusBox.x + 15, statusBox.y + 25, statusText);
-    
-    // Draw buttons
-    drawButton(&settingsButton, "Настройки");
-    drawButton(&exitButton, "Выход");
-}
-
-// Window event handler
-int windowHandler(int type, int par1, int par2) {
-    switch (type) {
-        case EVT_INIT:
-            initUI();
-            drawWindow();
-            FullUpdate();
-            break;
-            
-        case EVT_SHOW:
-            drawWindow();
-            FullUpdate();
-            break;
-            
-        case EVT_EXIT:
-            if (titleFont) CloseFont(titleFont);
-            if (textFont) CloseFont(textFont);
-            if (buttonFont) CloseFont(buttonFont);
-            break;
-            
-        case EVT_POINTERUP: {
-            int x = par1;
-            int y = par2;
-            
-            // Check Settings button
-            if (x >= settingsButton.x && x <= settingsButton.x + settingsButton.w &&
-                y >= settingsButton.y && y <= settingsButton.y + settingsButton.h) {
-                strncpy(statusText, "Настройки (в разработке)", sizeof(statusText) - 1);
-                drawWindow();
-                PartialUpdate(winX, winY, WIN_WIDTH, WIN_HEIGHT);
-            }
-            
-            // Check Exit button
-            if (x >= exitButton.x && x <= exitButton.x + exitButton.w &&
-                y >= exitButton.y && y <= exitButton.y + exitButton.h) {
-                CloseApp();
-            }
-            break;
-        }
-    }
-    
-    return 0;
 }
 
 // Application entry point
 int main(int argc, char *argv[]) {
-    // Open as panel (non-fullscreen)
     OpenScreen();
-    InkViewMain(windowHandler);
+    
+    // Show initial dialog
+    showInitialDialog();
     
     return 0;
 }
