@@ -240,22 +240,12 @@ void openKeyboardForField(int fieldIndex) {
 
 // Select folder using file chooser
 void selectFolder() {
-    char *selectedPath = OpenFileDialog(settings.inputFolder, NULL, NULL, NULL);
+    // Use OpenDirDialog instead of OpenFileDialog for folder selection
+    char *selectedPath = OpenDirDialog(settings.inputFolder, NULL);
     
     if (selectedPath != NULL) {
-        // Extract directory from path
-        char dirPath[256];
-        strncpy(dirPath, selectedPath, sizeof(dirPath) - 1);
-        dirPath[sizeof(dirPath) - 1] = '\0';
-        
-        char *lastSlash = strrchr(dirPath, '/');
-        if (lastSlash != NULL) {
-            *lastSlash = '\0';
-        }
-        
-        strncpy(settings.inputFolder, dirPath, sizeof(settings.inputFolder) - 1);
+        strncpy(settings.inputFolder, selectedPath, sizeof(settings.inputFolder) - 1);
         settings.inputFolder[sizeof(settings.inputFolder) - 1] = '\0';
-        
         drawSettings();
     }
 }
@@ -295,7 +285,8 @@ void handleSettingsPointer(int x, int y) {
 
 // Handle key events in settings
 void handleSettingsKey(int key) {
-    if (key == KEY_BACK || key == KEY_HOME) {
+    // Use IV_KEY_BACK and IV_KEY_HOME for PocketBook SDK
+    if (key == IV_KEY_BACK || key == IV_KEY_HOME) {
         cancelSettings();
     }
 }
