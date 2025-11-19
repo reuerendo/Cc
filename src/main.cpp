@@ -8,6 +8,15 @@
 static bool isConnected = false;
 static char statusText[512] = "Ожидание подключения к Calibre...\n\nПриложение готово к работе.";
 
+// Settings
+static char settingsIP[64] = "192.168.1.100";
+static char settingsPort[16] = "8080";
+static char settingsPassword[64] = "";
+static char settingsReadColumn[64] = "read";
+static char settingsReadDateColumn[64] = "read_date";
+static char settingsFavoriteColumn[64] = "favorite";
+static char settingsInputFolder[256] = "/mnt/ext1/Books";
+
 // System dialog path
 static const char* DIALOG_PATH = "/ebrmain/bin/dialog";
 
@@ -87,27 +96,88 @@ void showMainMenu() {
 
 // Show settings menu
 void showSettingsMenu() {
-    const char* buttons[] = { "Назад", "IP адрес", "Порт" };
+    // Input IP
+    char* newIP = OpenKeyboard("IP адрес", settingsIP, 63, KBD_NORMAL);
+    if (newIP == NULL) {
+        showMainMenu();
+        return;
+    }
+    strncpy(settingsIP, newIP, sizeof(settingsIP) - 1);
     
-    int result = showDialog(
-        PB_ICON_NONE,
-        "Настройки подключения\n\n"
-        "IP адрес: 192.168.1.100\n"
-        "Порт: 8080\n\n"
-        "Выберите параметр для изменения:",
-        buttons,
-        3
+    // Input Port
+    char* newPort = OpenKeyboard("Порт", settingsPort, 15, KBD_NORMAL);
+    if (newPort == NULL) {
+        showMainMenu();
+        return;
+    }
+    strncpy(settingsPort, newPort, sizeof(settingsPort) - 1);
+    
+    // Input Password
+    char* newPassword = OpenKeyboard("Пароль", settingsPassword, 63, KBD_PASSWORD);
+    if (newPassword == NULL) {
+        showMainMenu();
+        return;
+    }
+    strncpy(settingsPassword, newPassword, sizeof(settingsPassword) - 1);
+    
+    // Input Read column
+    char* newReadColumn = OpenKeyboard("Read column", settingsReadColumn, 63, KBD_NORMAL);
+    if (newReadColumn == NULL) {
+        showMainMenu();
+        return;
+    }
+    strncpy(settingsReadColumn, newReadColumn, sizeof(settingsReadColumn) - 1);
+    
+    // Input Read date column
+    char* newReadDateColumn = OpenKeyboard("Read date column", settingsReadDateColumn, 63, KBD_NORMAL);
+    if (newReadDateColumn == NULL) {
+        showMainMenu();
+        return;
+    }
+    strncpy(settingsReadDateColumn, newReadDateColumn, sizeof(settingsReadDateColumn) - 1);
+    
+    // Input Favorite column
+    char* newFavoriteColumn = OpenKeyboard("Favorite column", settingsFavoriteColumn, 63, KBD_NORMAL);
+    if (newFavoriteColumn == NULL) {
+        showMainMenu();
+        return;
+    }
+    strncpy(settingsFavoriteColumn, newFavoriteColumn, sizeof(settingsFavoriteColumn) - 1);
+    
+    // Input folder
+    char* newInputFolder = OpenKeyboard("Input folder", settingsInputFolder, 255, KBD_NORMAL);
+    if (newInputFolder == NULL) {
+        showMainMenu();
+        return;
+    }
+    strncpy(settingsInputFolder, newInputFolder, sizeof(settingsInputFolder) - 1);
+    
+    // Show confirmation dialog
+    const char* buttons[] = { "Сохранить" };
+    
+    char confirmText[1024];
+    snprintf(confirmText, sizeof(confirmText),
+        "Настройки:\n\n"
+        "IP адрес: %s\n"
+        "Порт: %s\n"
+        "Пароль: %s\n"
+        "Read column: %s\n"
+        "Read date column: %s\n"
+        "Favorite column: %s\n"
+        "Input folder: %s",
+        settingsIP,
+        settingsPort,
+        settingsPassword[0] != '\0' ? "***" : "(не установлен)",
+        settingsReadColumn,
+        settingsReadDateColumn,
+        settingsFavoriteColumn,
+        settingsInputFolder
     );
     
-    if (result == 1) {
-        showMainMenu();
-    } else if (result == 2) {
-        // Редактирование IP
-        showMainMenu();
-    } else if (result == 3) {
-        // Редактирование порта
-        showMainMenu();
-    }
+    showDialog(PB_ICON_INFO, confirmText, buttons, 1);
+    
+    // Return to main menu
+    showMainMenu();
 }
 
 // Application entry point
