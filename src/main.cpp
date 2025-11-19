@@ -17,6 +17,15 @@ static char settingsReadDateColumn[64] = "read_date";
 static char settingsFavoriteColumn[64] = "favorite";
 static char settingsInputFolder[256] = "/mnt/ext1/Books";
 
+// Text buffers for menu items
+static char ipText[128];
+static char portText[128];
+static char passwordText[128];
+static char readColumnText[128];
+static char readDateColumnText[128];
+static char favoriteColumnText[128];
+static char inputFolderText[300];
+
 // System dialog path
 static const char* DIALOG_PATH = "/ebrmain/bin/dialog";
 
@@ -68,15 +77,15 @@ int showDialog(PBDialogIcon icon, const char* text, const char* buttons[], int b
     return WEXITSTATUS(status);
 }
 
-// Settings menu handlers
+// Settings menu items
 static imenu settingsMenuItems[] = {
-    { ITEM_ACTIVE, 0, "IP адрес", NULL },
-    { ITEM_ACTIVE, 1, "Порт", NULL },
-    { ITEM_ACTIVE, 2, "Пароль", NULL },
-    { ITEM_ACTIVE, 3, "Read column", NULL },
-    { ITEM_ACTIVE, 4, "Read date column", NULL },
-    { ITEM_ACTIVE, 5, "Favorite column", NULL },
-    { ITEM_ACTIVE, 6, "Input folder", NULL },
+    { ITEM_ACTIVE, 0, ipText, NULL },
+    { ITEM_ACTIVE, 1, portText, NULL },
+    { ITEM_ACTIVE, 2, passwordText, NULL },
+    { ITEM_ACTIVE, 3, readColumnText, NULL },
+    { ITEM_ACTIVE, 4, readDateColumnText, NULL },
+    { ITEM_ACTIVE, 5, favoriteColumnText, NULL },
+    { ITEM_ACTIVE, 6, inputFolderText, NULL },
     { 0, 0, NULL, NULL }
 };
 
@@ -86,6 +95,7 @@ static void ipKeyboardHandler(char* text) {
         strncpy(settingsIP, text, sizeof(settingsIP) - 1);
         settingsIP[sizeof(settingsIP) - 1] = '\0';
     }
+    showSettingsMenu();
 }
 
 // Keyboard handler for Port
@@ -94,6 +104,7 @@ static void portKeyboardHandler(char* text) {
         strncpy(settingsPort, text, sizeof(settingsPort) - 1);
         settingsPort[sizeof(settingsPort) - 1] = '\0';
     }
+    showSettingsMenu();
 }
 
 // Keyboard handler for Password
@@ -102,6 +113,7 @@ static void passwordKeyboardHandler(char* text) {
         strncpy(settingsPassword, text, sizeof(settingsPassword) - 1);
         settingsPassword[sizeof(settingsPassword) - 1] = '\0';
     }
+    showSettingsMenu();
 }
 
 // Keyboard handler for Read column
@@ -110,6 +122,7 @@ static void readColumnKeyboardHandler(char* text) {
         strncpy(settingsReadColumn, text, sizeof(settingsReadColumn) - 1);
         settingsReadColumn[sizeof(settingsReadColumn) - 1] = '\0';
     }
+    showSettingsMenu();
 }
 
 // Keyboard handler for Read date column
@@ -118,6 +131,7 @@ static void readDateColumnKeyboardHandler(char* text) {
         strncpy(settingsReadDateColumn, text, sizeof(settingsReadDateColumn) - 1);
         settingsReadDateColumn[sizeof(settingsReadDateColumn) - 1] = '\0';
     }
+    showSettingsMenu();
 }
 
 // Keyboard handler for Favorite column
@@ -126,6 +140,7 @@ static void favoriteColumnKeyboardHandler(char* text) {
         strncpy(settingsFavoriteColumn, text, sizeof(settingsFavoriteColumn) - 1);
         settingsFavoriteColumn[sizeof(settingsFavoriteColumn) - 1] = '\0';
     }
+    showSettingsMenu();
 }
 
 // Keyboard handler for Input folder
@@ -134,10 +149,17 @@ static void inputFolderKeyboardHandler(char* text) {
         strncpy(settingsInputFolder, text, sizeof(settingsInputFolder) - 1);
         settingsInputFolder[sizeof(settingsInputFolder) - 1] = '\0';
     }
+    showSettingsMenu();
 }
 
 // Settings menu item handler
-static int settingsMenuHandler(int index) {
+static void settingsMenuHandler(int index) {
+    if (index == -1) {
+        // Back button pressed
+        showMainMenu();
+        return;
+    }
+    
     switch (index) {
         case 0: // IP адрес
             OpenKeyboard("IP адрес", settingsIP, 63, KBD_NORMAL, ipKeyboardHandler);
@@ -167,8 +189,6 @@ static int settingsMenuHandler(int index) {
             OpenKeyboard("Input folder", settingsInputFolder, 255, KBD_NORMAL, inputFolderKeyboardHandler);
             break;
     }
-    
-    return 0;
 }
 
 // Show main menu
@@ -200,10 +220,6 @@ void showMainMenu() {
 // Show settings menu
 void showSettingsMenu() {
     // Update menu items with current values
-    char ipText[128], portText[128], passwordText[128];
-    char readColumnText[128], readDateColumnText[128];
-    char favoriteColumnText[128], inputFolderText[300];
-    
     snprintf(ipText, sizeof(ipText), "IP адрес: %s", settingsIP);
     snprintf(portText, sizeof(portText), "Порт: %s", settingsPort);
     snprintf(passwordText, sizeof(passwordText), "Пароль: %s", 
@@ -213,16 +229,8 @@ void showSettingsMenu() {
     snprintf(favoriteColumnText, sizeof(favoriteColumnText), "Favorite column: %s", settingsFavoriteColumn);
     snprintf(inputFolderText, sizeof(inputFolderText), "Input folder: %s", settingsInputFolder);
     
-    settingsMenuItems[0].text = ipText;
-    settingsMenuItems[1].text = portText;
-    settingsMenuItems[2].text = passwordText;
-    settingsMenuItems[3].text = readColumnText;
-    settingsMenuItems[4].text = readDateColumnText;
-    settingsMenuItems[5].text = favoriteColumnText;
-    settingsMenuItems[6].text = inputFolderText;
-    
-    // Show menu
-    OpenMenu(settingsMenuItems, settingsMenuHandler, NULL, showMainMenu);
+    // Show menu at center of screen
+    OpenMenu(settingsMenuItems, 0, ScreenWidth() / 2, ScreenHeight() / 2, settingsMenuHandler);
 }
 
 // Application entry point
