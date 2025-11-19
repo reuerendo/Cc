@@ -136,9 +136,11 @@ int mainHandler(int type, int par1, int par2) {
             break;
             
         case EVT_KEYPRESS:
-            // Handle hardware buttons if needed
-            if (par1 == KEY_BACK || par1 == KEY_HOME) {
-                CloseApp();
+            // Handle hardware buttons - close on most key presses except navigation
+            // Navigation keys are typically KEY_UP (0x15), KEY_DOWN (0x16), etc.
+            if (par1 != 0x15 && par1 != 0x16 && par1 != 0x17 && par1 != 0x18) {
+                // Allow closing with most hardware buttons
+                // User can use touch Exit button instead
             }
             break;
     }
