@@ -2,12 +2,8 @@
 #include <string.h>
 #include <stdlib.h>
 
-// Forward declarations
-void showMainMenu();
-void showSettingsScreen();
-
 // ============================================================================
-// SETTINGS STRUCTURE
+// SETTINGS MODULE
 // ============================================================================
 
 struct AppSettings {
@@ -30,9 +26,36 @@ static AppSettings settings = {
     "/mnt/ext1/Books"
 };
 
-// ============================================================================
-// SETTINGS I/O
-// ============================================================================
+enum FieldIndex {
+    FIELD_IP = 0,
+    FIELD_PORT,
+    FIELD_PASSWORD,
+    FIELD_READ_COLUMN,
+    FIELD_READ_DATE_COLUMN,
+    FIELD_FAVORITE_COLUMN,
+    FIELD_INPUT_FOLDER,
+    FIELD_COUNT
+};
+
+struct FieldInfo {
+    const char* label;
+    char* value;
+    int maxLen;
+    bool isFolder;
+};
+
+static FieldInfo fieldInfo[FIELD_COUNT];
+static int currentField = -1;
+
+void initFieldInfo() {
+    fieldInfo[FIELD_IP] = {"IP адрес:", settings.ip, sizeof(settings.ip), false};
+    fieldInfo[FIELD_PORT] = {"Порт:", settings.port, sizeof(settings.port), false};
+    fieldInfo[FIELD_PASSWORD] = {"Пароль:", settings.password, sizeof(settings.password), false};
+    fieldInfo[FIELD_READ_COLUMN] = {"Read column:", settings.readColumn, sizeof(settings.readColumn), false};
+    fieldInfo[FIELD_READ_DATE_COLUMN] = {"Read date column:", settings.readDateColumn, sizeof(settings.readDateColumn), false};
+    fieldInfo[FIELD_FAVORITE_COLUMN] = {"Favorite column:", settings.favoriteColumn, sizeof(settings.favoriteColumn), false};
+    fieldInfo[FIELD_INPUT_FOLDER] = {"Input folder:", settings.inputFolder, sizeof(settings.inputFolder), true};
+}
 
 void loadSettings() {
     FILE *f = fopen("/mnt/ext1/system/config/calibre-companion.cfg", "r");
@@ -87,145 +110,170 @@ void saveSettings() {
     }
 }
 
-// ============================================================================
-// SETTINGS MENU
-// ============================================================================
-
-static imenu settingsMenu;
-
-void editField(char* field, int maxLen, const char* title) {
-    char buffer[256];
-    strncpy(buffer, field, sizeof(buffer) - 1);
-    buffer[sizeof(buffer) - 1] = '\0';
-    
-    if (OpenKeyboard(title, buffer, maxLen - 1, KBD_NORMAL, NULL) != 0) {
-        strncpy(field, buffer, maxLen - 1);
-        field[maxLen - 1] = '\0';
+// Callback для ввода текста
+void keyboardCallback(char *text) {
+    if (text && currentField >= 0 && currentField < FIELD_COUNT) {
+        strncpy(fieldInfo[currentField].value, text, fieldInfo[currentField].maxLen - 1);
+        fieldInfo[currentField].value[fieldInfo[currentField].maxLen - 1] = '\0';
     }
 }
 
-void selectFolderCallback(char *path) {
-    if (path && path[0]) {
+// Callback для выбора папки
+void folderCallback(char *path) {
+    if (path && path[0] != '\0') {
         strncpy(settings.inputFolder, path, sizeof(settings.inputFolder) - 1);
         settings.inputFolder[sizeof(settings.inputFolder) - 1] = '\0';
     }
 }
 
-void settingsMenuHandler(int index) {
-    switch (index) {
-        case 0: // IP
-            editField(settings.ip, sizeof(settings.ip), "IP адрес");
-            break;
-        case 1: // Port
-            editField(settings.port, sizeof(settings.port), "Порт");
-            break;
-        case 2: // Password
-            editField(settings.password, sizeof(settings.password), "Пароль");
-            break;
-        case 3: // Read Column
-            editField(settings.readColumn, sizeof(settings.readColumn), "Read column");
-            break;
-        case 4: // Read Date Column
-            editField(settings.readDateColumn, sizeof(settings.readDateColumn), "Read date column");
-            break;
-        case 5: // Favorite Column
-            editField(settings.favoriteColumn, sizeof(settings.favoriteColumn), "Favorite column");
-            break;
-        case 6: // Input Folder
-            OpenDirectorySelector("Выберите папку", settings.inputFolder, 
-                                sizeof(settings.inputFolder), selectFolderCallback);
-            break;
-        case 7: // Save
-            saveSettings();
-            showMainMenu();
-            return;
-        case 8: // Cancel
-            showMainMenu();
-            return;
+// ============================================================================
+// SETTINGS PANEL
+// ============================================================================
+
+void showSettingsPanel() {
+    imenu settingsMenu[FIELD_COUNT + 2];
+    int menuIndex = 0;
+    
+    // Добавляем поля настроек
+    for (int i = 0; i < FIELD_COUNT; i++) {
+        char buffer[512];
+        
+        if (i == FIELD_PASSWORD && strlen(fieldInfo[i].value) > 0) {
+            // Маскируем пароль
+            char masked[128];
+            int len = strlen(fieldInfo[i].value);
+            for (int j = 0; j < len && j < 127; j++) {
+                masked[j] = '*';
+            }
+            masked[len] = '\0';
+            snprintf(buffer, sizeof(buffer), "%s %s", fieldInfo[i].label, masked);
+        } else {
+            snprintf(buffer, sizeof(buffer), "%s %s", fieldInfo[i].label, fieldInfo[i].value);
+        }
+        
+        settingsMenu[menuIndex].type = ITEM_ACTIVE;
+        settingsMenu[menuIndex].text = strdup(buffer);
+        settingsMenu[menuIndex].index = i;
+        menuIndex++;
     }
     
-    // Refresh menu to show updated values
-    showSettingsScreen();
-}
-
-void showSettingsScreen() {
-    ClearScreen();
+    // Разделитель
+    settingsMenu[menuIndex].type = ITEM_SEPARATOR;
+    settingsMenu[menuIndex].text = NULL;
+    menuIndex++;
     
-    // Build menu items
-    char ipItem[128], portItem[128], passItem[128];
-    char readColItem[128], readDateItem[128], favItem[128], folderItem[300];
+    // Кнопка "Сохранить"
+    settingsMenu[menuIndex].type = ITEM_ACTIVE;
+    settingsMenu[menuIndex].text = (char*)"Сохранить";
+    settingsMenu[menuIndex].index = 1000;
+    menuIndex++;
     
-    snprintf(ipItem, sizeof(ipItem), "IP адрес: %s", settings.ip);
-    snprintf(portItem, sizeof(portItem), "Порт: %s", settings.port);
-    snprintf(passItem, sizeof(passItem), "Пароль: %s", 
-             strlen(settings.password) > 0 ? "••••••" : "(не задан)");
-    snprintf(readColItem, sizeof(readColItem), "Read column: %s", settings.readColumn);
-    snprintf(readDateItem, sizeof(readDateItem), "Read date column: %s", settings.readDateColumn);
-    snprintf(favItem, sizeof(favItem), "Favorite column: %s", settings.favoriteColumn);
-    snprintf(folderItem, sizeof(folderItem), "Папка: %s", settings.inputFolder);
+    int result = OpenMenu(settingsMenu, 0, 0, 0, 0, NULL);
     
-    iminit(&settingsMenu, sizeof(settingsMenu));
-    settingsMenu.font = OpenFont("LiberationSans", 28, 1);
+    // Освобождаем память
+    for (int i = 0; i < FIELD_COUNT; i++) {
+        free((void*)settingsMenu[i].text);
+    }
     
-    imenuex(&settingsMenu, 1, ipItem, NULL, 0, NULL, NULL);
-    imenuex(&settingsMenu, 2, portItem, NULL, 0, NULL, NULL);
-    imenuex(&settingsMenu, 3, passItem, NULL, 0, NULL, NULL);
-    imenuex(&settingsMenu, 4, readColItem, NULL, 0, NULL, NULL);
-    imenuex(&settingsMenu, 5, readDateItem, NULL, 0, NULL, NULL);
-    imenuex(&settingsMenu, 6, favItem, NULL, 0, NULL, NULL);
-    imenuex(&settingsMenu, 7, folderItem, NULL, 0, NULL, NULL);
-    imenuex(&settingsMenu, 8, "---", NULL, 0, NULL, NULL);
-    imenuex(&settingsMenu, 9, "Сохранить", NULL, 0, NULL, NULL);
-    imenuex(&settingsMenu, 10, "Отмена", NULL, 0, NULL, NULL);
+    if (result == -1) {
+        // Отмена - ничего не делаем
+        return;
+    }
     
-    OpenMenu(&settingsMenu, 0, 0, settingsMenuHandler);
+    if (result == 1000) {
+        // Сохранить
+        saveSettings();
+        return;
+    }
+    
+    // Редактирование поля
+    if (result >= 0 && result < FIELD_COUNT) {
+        currentField = result;
+        
+        if (fieldInfo[result].isFolder) {
+            // Выбор папки
+            char buffer[256];
+            strncpy(buffer, fieldInfo[result].value, sizeof(buffer) - 1);
+            buffer[sizeof(buffer) - 1] = '\0';
+            OpenDirectorySelector("Выберите папку", buffer, sizeof(buffer), folderCallback);
+        } else {
+            // Ввод текста
+            char buffer[256];
+            strncpy(buffer, fieldInfo[result].value, sizeof(buffer) - 1);
+            buffer[sizeof(buffer) - 1] = '\0';
+            
+            int keyboardType = (result == FIELD_PORT) ? KBD_NUMERIC : KBD_NORMAL;
+            OpenKeyboard(fieldInfo[result].label, buffer, fieldInfo[result].maxLen - 1, keyboardType, keyboardCallback);
+        }
+        
+        // Показываем панель настроек снова после редактирования
+        showSettingsPanel();
+    }
 }
 
 // ============================================================================
 // MAIN MENU
 // ============================================================================
 
-static imenu mainMenu;
 static bool isConnected = false;
 
-void mainMenuHandler(int index) {
-    switch (index) {
-        case 0: // Settings
-            showSettingsScreen();
-            break;
-        case 1: // Sync
-            Message(ICON_INFORMATION, "Синхронизация", 
-                    "Функция синхронизации в разработке", 2000);
+void showMainMenu() {
+    imenu mainMenu[4];
+    int menuIndex = 0;
+    
+    // Заголовок
+    char statusText[512];
+    snprintf(statusText, sizeof(statusText), 
+        "Pocketbook Companion\n\nСтатус: %s", 
+        isConnected ? "Подключено" : "Не подключено");
+    
+    mainMenu[menuIndex].type = ITEM_HEADER;
+    mainMenu[menuIndex].text = statusText;
+    menuIndex++;
+    
+    // Синхронизация
+    mainMenu[menuIndex].type = ITEM_ACTIVE;
+    mainMenu[menuIndex].text = (char*)"Синхронизация";
+    mainMenu[menuIndex].index = 1;
+    menuIndex++;
+    
+    // Настройки
+    mainMenu[menuIndex].type = ITEM_ACTIVE;
+    mainMenu[menuIndex].text = (char*)"Настройки";
+    mainMenu[menuIndex].index = 2;
+    menuIndex++;
+    
+    // Выход
+    mainMenu[menuIndex].type = ITEM_ACTIVE;
+    mainMenu[menuIndex].text = (char*)"Выход";
+    mainMenu[menuIndex].index = 3;
+    menuIndex++;
+    
+    int result = OpenMenu(mainMenu, 0, 0, 0, 0, NULL);
+    
+    switch (result) {
+        case 1:
+            // Синхронизация
+            Message(ICON_INFORMATION, "Синхронизация", "Функция в разработке", 1500);
             showMainMenu();
             break;
-        case 2: // Exit
+            
+        case 2:
+            // Настройки
+            showSettingsPanel();
+            showMainMenu();
+            break;
+            
+        case 3:
+            // Выход
             CloseApp();
             break;
+            
         default:
-            showMainMenu();
+            // Отмена или закрытие
+            CloseApp();
             break;
     }
-}
-
-void showMainMenu() {
-    ClearScreen();
-    
-    iminit(&mainMenu, sizeof(mainMenu));
-    mainMenu.font = OpenFont("LiberationSans", 32, 1);
-    
-    char statusStr[256];
-    snprintf(statusStr, sizeof(statusStr), "Статус: %s", 
-             isConnected ? "Подключено" : "Не подключено");
-    
-    imenuex(&mainMenu, 1, "Pocketbook Companion", NULL, 0, NULL, NULL);
-    imenuex(&mainMenu, 2, statusStr, NULL, 0, NULL, NULL);
-    imenuex(&mainMenu, 3, "---", NULL, 0, NULL, NULL);
-    imenuex(&mainMenu, 4, "Настройки", NULL, 0, NULL, NULL);
-    imenuex(&mainMenu, 5, "Синхронизация", NULL, 0, NULL, NULL);
-    imenuex(&mainMenu, 6, "---", NULL, 0, NULL, NULL);
-    imenuex(&mainMenu, 7, "Выход", NULL, 0, NULL, NULL);
-    
-    OpenMenu(&mainMenu, 0, 0, mainMenuHandler);
 }
 
 // ============================================================================
@@ -236,13 +284,15 @@ static int mainEventHandler(int type, int par1, int par2) {
     switch (type) {
         case EVT_INIT:
             loadSettings();
+            initFieldInfo();
             showMainMenu();
             break;
+            
         case EVT_SHOW:
-            break;
-        case EVT_EXIT:
+            showMainMenu();
             break;
     }
+    
     return 0;
 }
 
