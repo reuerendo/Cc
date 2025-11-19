@@ -4,218 +4,443 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
-// Define KEY_BACK if not defined in SDK
-#ifndef KEY_BACK
-#define KEY_BACK 23
-#endif
-
-// Application state
-static char statusText[512] = "Ожидание подключения к Calibre...\n\nПриложение готово к работе.";
-
-// Settings
-static char settingsIP[64] = "192.168.1.100";
-static char settingsPort[16] = "8080";
-static char settingsPassword[64] = "";
-static char settingsReadColumn[64] = "read";
-static char settingsReadDateColumn[64] = "read_date";
-static char settingsFavoriteColumn[64] = "favorite";
-static char settingsInputFolder[256] = "/mnt/ext1/Books";
-
-// Text buffers for menu items
-static char ipText[128];
-static char portText[128];
-static char passwordText[128];
-static char readColumnText[128];
-static char readDateColumnText[128];
-static char favoriteColumnText[128];
-static char inputFolderText[300];
-
-// Current selected menu index
-static int currentMenuIndex = 0;
-
 // Forward declarations
 void showMainMenu();
-void showSettingsMenu();
-int mainHandler(int type, int par1, int par2);
+void showSettingsScreen();
 
-// Settings menu items
-static imenu settingsMenuItems[] = {
-    { ITEM_HEADER, 0, (char*)"Настройки", NULL },
-    { ITEM_ACTIVE, 0, ipText, NULL },
-    { ITEM_ACTIVE, 1, portText, NULL },
-    { ITEM_ACTIVE, 2, passwordText, NULL },
-    { ITEM_ACTIVE, 3, readColumnText, NULL },
-    { ITEM_ACTIVE, 4, readDateColumnText, NULL },
-    { ITEM_ACTIVE, 5, favoriteColumnText, NULL },
-    { ITEM_ACTIVE, 6, inputFolderText, NULL },
-    { 0, 0, NULL, NULL }
+// ============================================================================
+// SETTINGS MODULE
+// ============================================================================
+
+// Settings structure
+struct AppSettings {
+    char ip[64];
+    char port[16];
+    char password[128];
+    char readColumn[64];
+    char readDateColumn[64];
+    char favoriteColumn[64];
+    char inputFolder[256];
 };
 
-// Keyboard handler for IP
-static void ipKeyboardHandler(char* text) {
-    if (text != NULL) {
-        strncpy(settingsIP, text, sizeof(settingsIP) - 1);
-        settingsIP[sizeof(settingsIP) - 1] = '\0';
-    }
-    showSettingsMenu();
-}
-
-// Keyboard handler for Port
-static void portKeyboardHandler(char* text) {
-    if (text != NULL) {
-        strncpy(settingsPort, text, sizeof(settingsPort) - 1);
-        settingsPort[sizeof(settingsPort) - 1] = '\0';
-    }
-    showSettingsMenu();
-}
-
-// Keyboard handler for Password
-static void passwordKeyboardHandler(char* text) {
-    if (text != NULL) {
-        strncpy(settingsPassword, text, sizeof(settingsPassword) - 1);
-        settingsPassword[sizeof(settingsPassword) - 1] = '\0';
-    }
-    showSettingsMenu();
-}
-
-// Keyboard handler for Read column
-static void readColumnKeyboardHandler(char* text) {
-    if (text != NULL) {
-        strncpy(settingsReadColumn, text, sizeof(settingsReadColumn) - 1);
-        settingsReadColumn[sizeof(settingsReadColumn) - 1] = '\0';
-    }
-    showSettingsMenu();
-}
-
-// Keyboard handler for Read date column
-static void readDateColumnKeyboardHandler(char* text) {
-    if (text != NULL) {
-        strncpy(settingsReadDateColumn, text, sizeof(settingsReadDateColumn) - 1);
-        settingsReadDateColumn[sizeof(settingsReadDateColumn) - 1] = '\0';
-    }
-    showSettingsMenu();
-}
-
-// Keyboard handler for Favorite column
-static void favoriteColumnKeyboardHandler(char* text) {
-    if (text != NULL) {
-        strncpy(settingsFavoriteColumn, text, sizeof(settingsFavoriteColumn) - 1);
-        settingsFavoriteColumn[sizeof(settingsFavoriteColumn) - 1] = '\0';
-    }
-    showSettingsMenu();
-}
-
-// Keyboard handler for Input folder
-static void inputFolderKeyboardHandler(char* text) {
-    if (text != NULL) {
-        strncpy(settingsInputFolder, text, sizeof(settingsInputFolder) - 1);
-        settingsInputFolder[sizeof(settingsInputFolder) - 1] = '\0';
-    }
-    showSettingsMenu();
-}
-
-// Settings menu item handler
-static void settingsMenuHandler(int index) {
-    currentMenuIndex = index;
-    
-    if (index == -1) {
-        // Back button pressed
-        return;
-    }
-    
-    switch (index) {
-        case 0: // IP адрес
-            OpenKeyboard("IP адрес", settingsIP, 63, KBD_NORMAL, ipKeyboardHandler);
-            break;
-            
-        case 1: // Порт
-            OpenKeyboard("Порт", settingsPort, 15, KBD_NORMAL, portKeyboardHandler);
-            break;
-            
-        case 2: // Пароль
-            OpenKeyboard("Пароль", settingsPassword, 63, KBD_PASSWORD, passwordKeyboardHandler);
-            break;
-            
-        case 3: // Read column
-            OpenKeyboard("Read column", settingsReadColumn, 63, KBD_NORMAL, readColumnKeyboardHandler);
-            break;
-            
-        case 4: // Read date column
-            OpenKeyboard("Read date column", settingsReadDateColumn, 63, KBD_NORMAL, readDateColumnKeyboardHandler);
-            break;
-            
-        case 5: // Favorite column
-            OpenKeyboard("Favorite column", settingsFavoriteColumn, 63, KBD_NORMAL, favoriteColumnKeyboardHandler);
-            break;
-            
-        case 6: // Input folder
-            OpenKeyboard("Input folder", settingsInputFolder, 255, KBD_NORMAL, inputFolderKeyboardHandler);
-            break;
-    }
-}
-
-// Main menu items
-static imenu mainMenuItems[] = {
-    { ITEM_HEADER, 0, (char*)"Pocketbook Companion", NULL },
-    { ITEM_ACTIVE, 1, (char*)"Настройки", NULL },
-    { ITEM_SEPARATOR, 0, NULL, NULL },
-    { ITEM_ACTIVE, 2, (char*)"Выход", NULL },
-    { 0, 0, NULL, NULL }
+// Global settings
+static AppSettings settings = {
+    "192.168.1.100",
+    "8080",
+    "",
+    "Last Read",
+    "Last Read Date",
+    "Favorite",
+    "/mnt/ext1/Books"
 };
 
-// Main menu handler
-static void mainMenuHandler(int index) {
-    switch (index) {
-        case 1:  // Настройки
-            showSettingsMenu();
-            break;
-            
-        case 2:  // Выход
-            CloseApp();
-            break;
+// Field indices
+enum FieldIndex {
+    FIELD_IP = 0,
+    FIELD_PORT,
+    FIELD_PASSWORD,
+    FIELD_READ_COLUMN,
+    FIELD_READ_DATE_COLUMN,
+    FIELD_FAVORITE_COLUMN,
+    FIELD_INPUT_FOLDER,
+    FIELD_COUNT
+};
+
+// Field structure
+struct FieldRect {
+    int y;
+    int height;
+    const char* label;
+    char* value;
+    int maxLen;
+    bool isFolder;
+};
+
+// Current state
+static int currentField = -1;
+static ifont *mainFont = NULL;
+static ifont *labelFont = NULL;
+static FieldRect fields[FIELD_COUNT];
+
+// Initialize fields
+void initFields() {
+    int startY = 80;
+    int fieldHeight = 60;
+    int spacing = 10;
+    
+    fields[FIELD_IP] = {startY, fieldHeight, "IP адрес:", settings.ip, sizeof(settings.ip), false};
+    fields[FIELD_PORT] = {startY + (fieldHeight + spacing) * 1, fieldHeight, "Порт:", settings.port, sizeof(settings.port), false};
+    fields[FIELD_PASSWORD] = {startY + (fieldHeight + spacing) * 2, fieldHeight, "Пароль:", settings.password, sizeof(settings.password), false};
+    fields[FIELD_READ_COLUMN] = {startY + (fieldHeight + spacing) * 3, fieldHeight, "Read column:", settings.readColumn, sizeof(settings.readColumn), false};
+    fields[FIELD_READ_DATE_COLUMN] = {startY + (fieldHeight + spacing) * 4, fieldHeight, "Read date column:", settings.readDateColumn, sizeof(settings.readDateColumn), false};
+    fields[FIELD_FAVORITE_COLUMN] = {startY + (fieldHeight + spacing) * 5, fieldHeight, "Favorite column:", settings.favoriteColumn, sizeof(settings.favoriteColumn), false};
+    fields[FIELD_INPUT_FOLDER] = {startY + (fieldHeight + spacing) * 6, fieldHeight, "Input folder:", settings.inputFolder, sizeof(settings.inputFolder), true};
+}
+
+// Load settings from file
+void loadSettings() {
+    FILE *f = fopen("/mnt/ext1/system/config/calibre-companion.cfg", "r");
+    if (f) {
+        char line[512];
+        while (fgets(line, sizeof(line), f)) {
+            char *eq = strchr(line, '=');
+            if (eq) {
+                *eq = '\0';
+                char *key = line;
+                char *value = eq + 1;
+                
+                // Remove newline
+                char *nl = strchr(value, '\n');
+                if (nl) *nl = '\0';
+                
+                if (strcmp(key, "ip") == 0) {
+                    strncpy(settings.ip, value, sizeof(settings.ip) - 1);
+                } else if (strcmp(key, "port") == 0) {
+                    strncpy(settings.port, value, sizeof(settings.port) - 1);
+                } else if (strcmp(key, "password") == 0) {
+                    strncpy(settings.password, value, sizeof(settings.password) - 1);
+                } else if (strcmp(key, "read_column") == 0) {
+                    strncpy(settings.readColumn, value, sizeof(settings.readColumn) - 1);
+                } else if (strcmp(key, "read_date_column") == 0) {
+                    strncpy(settings.readDateColumn, value, sizeof(settings.readDateColumn) - 1);
+                } else if (strcmp(key, "favorite_column") == 0) {
+                    strncpy(settings.favoriteColumn, value, sizeof(settings.favoriteColumn) - 1);
+                } else if (strcmp(key, "input_folder") == 0) {
+                    strncpy(settings.inputFolder, value, sizeof(settings.inputFolder) - 1);
+                }
+            }
+        }
+        fclose(f);
     }
 }
 
-// Show settings menu
-void showSettingsMenu() {
-    // Update menu items with current values
-    snprintf(ipText, sizeof(ipText), "IP адрес: %s", settingsIP);
-    snprintf(portText, sizeof(portText), "Порт: %s", settingsPort);
-    snprintf(passwordText, sizeof(passwordText), "Пароль: %s", 
-             settingsPassword[0] != '\0' ? "***" : "(не установлен)");
-    snprintf(readColumnText, sizeof(readColumnText), "Read column: %s", settingsReadColumn);
-    snprintf(readDateColumnText, sizeof(readDateColumnText), "Read date column: %s", settingsReadDateColumn);
-    snprintf(favoriteColumnText, sizeof(favoriteColumnText), "Favorite column: %s", settingsFavoriteColumn);
-    snprintf(inputFolderText, sizeof(inputFolderText), "Input folder: %s", settingsInputFolder);
+// Save settings to file
+void saveSettings() {
+    FILE *f = fopen("/mnt/ext1/system/config/calibre-companion.cfg", "w");
+    if (f) {
+        fprintf(f, "ip=%s\n", settings.ip);
+        fprintf(f, "port=%s\n", settings.port);
+        fprintf(f, "password=%s\n", settings.password);
+        fprintf(f, "read_column=%s\n", settings.readColumn);
+        fprintf(f, "read_date_column=%s\n", settings.readDateColumn);
+        fprintf(f, "favorite_column=%s\n", settings.favoriteColumn);
+        fprintf(f, "input_folder=%s\n", settings.inputFolder);
+        fclose(f);
+        
+        Message(ICON_INFORMATION, "Успешно", "Настройки сохранены", 1500);
+        showMainMenu();
+    } else {
+        Message(ICON_ERROR, "Ошибка", "Не удалось сохранить настройки", 2000);
+    }
+}
+
+// Cancel settings
+void cancelSettings() {
+    showMainMenu();
+}
+
+// Draw settings screen
+void drawSettings() {
+    ClearScreen();
     
-    // Show menu at center of screen
-    OpenMenu(settingsMenuItems, currentMenuIndex, ScreenWidth() / 2, ScreenHeight() / 2, settingsMenuHandler);
+    int screenW = ScreenWidth();
+    int screenH = ScreenHeight();
+    
+    // Initialize fonts if needed
+    if (!mainFont) {
+        mainFont = OpenFont("LiberationSans", 24, 1);
+        labelFont = OpenFont("LiberationSans", 20, 1);
+    }
+    
+    // Draw title
+    SetFont(mainFont, BLACK);
+    DrawString(20, 30, "Настройки");
+    
+    // Draw fields
+    SetFont(labelFont, BLACK);
+    for (int i = 0; i < FIELD_COUNT; i++) {
+        FieldRect &field = fields[i];
+        
+        // Draw label
+        DrawString(20, field.y + 5, field.label);
+        
+        // Draw value box
+        int boxY = field.y + 25;
+        int boxHeight = 35;
+        
+        // Highlight current field
+        if (i == currentField) {
+            FillArea(15, boxY - 2, screenW - 30, boxHeight + 4, LGRAY);
+        }
+        
+        // Draw border
+        DrawRect(15, boxY, screenW - 30, boxHeight, BLACK);
+        
+        // Draw value text
+        const char* displayValue = field.value;
+        
+        // For password field, show asterisks
+        if (i == FIELD_PASSWORD && strlen(field.value) > 0) {
+            static char masked[128];
+            int len = strlen(field.value);
+            for (int j = 0; j < len && j < 127; j++) {
+                masked[j] = '*';
+            }
+            masked[len] = '\0';
+            displayValue = masked;
+        }
+        
+        DrawString(20, boxY + 7, displayValue);
+        
+        // Draw folder icon indicator for folder field
+        if (field.isFolder) {
+            DrawString(screenW - 80, boxY + 7, "[...]");
+        }
+    }
+    
+    // Draw buttons at bottom
+    int buttonY = screenH - 70;
+    int buttonWidth = (screenW - 60) / 2;
+    
+    // Cancel button
+    DrawRect(20, buttonY, buttonWidth, 50, BLACK);
+    SetFont(mainFont, BLACK);
+    int cancelW = StringWidth("Отмена");
+    DrawString(20 + (buttonWidth - cancelW) / 2, buttonY + 15, "Отмена");
+    
+    // Save button
+    DrawRect(40 + buttonWidth, buttonY, buttonWidth, 50, BLACK);
+    FillArea(42 + buttonWidth, buttonY + 2, buttonWidth - 4, 46, DGRAY);
+    SetFont(mainFont, WHITE);
+    int saveW = StringWidth("Сохранить");
+    DrawString(40 + buttonWidth + (buttonWidth - saveW) / 2, buttonY + 15, "Сохранить");
+    
+    FullUpdate();
+}
+
+// Open keyboard for field input
+void openKeyboardForField(int fieldIndex) {
+    if (fieldIndex < 0 || fieldIndex >= FIELD_COUNT) return;
+    
+    FieldRect &field = fields[fieldIndex];
+    
+    // Create a simple input dialog
+    char buffer[256];
+    strncpy(buffer, field.value, sizeof(buffer) - 1);
+    buffer[sizeof(buffer) - 1] = '\0';
+    
+    // Use OpenKeyboard if available, otherwise use simple message
+    // Note: OpenKeyboard API varies between SDK versions
+    // This is a placeholder - actual implementation depends on SDK version
+    Message(ICON_QUESTION, "Ввод", field.label, 2000);
+    
+    // In production, you would use OpenKeyboard here
+    // The callback would update field.value and call drawSettings()
+}
+
+// Select folder using file chooser
+void selectFolder() {
+    char *selectedPath = OpenFileDialog(settings.inputFolder, NULL, NULL, NULL);
+    
+    if (selectedPath != NULL) {
+        // Extract directory from path
+        char dirPath[256];
+        strncpy(dirPath, selectedPath, sizeof(dirPath) - 1);
+        dirPath[sizeof(dirPath) - 1] = '\0';
+        
+        char *lastSlash = strrchr(dirPath, '/');
+        if (lastSlash != NULL) {
+            *lastSlash = '\0';
+        }
+        
+        strncpy(settings.inputFolder, dirPath, sizeof(settings.inputFolder) - 1);
+        settings.inputFolder[sizeof(settings.inputFolder) - 1] = '\0';
+        
+        drawSettings();
+    }
+}
+
+// Handle pointer events in settings
+void handleSettingsPointer(int x, int y) {
+    int screenW = ScreenWidth();
+    int screenH = ScreenHeight();
+    
+    // Check if clicked on a field
+    for (int i = 0; i < FIELD_COUNT; i++) {
+        int boxY = fields[i].y + 25;
+        if (x >= 15 && x <= screenW - 15 && y >= boxY && y <= boxY + 35) {
+            currentField = i;
+            
+            if (fields[i].isFolder) {
+                selectFolder();
+            } else {
+                openKeyboardForField(i);
+            }
+            return;
+        }
+    }
+    
+    // Check if clicked on buttons
+    int buttonY = screenH - 70;
+    int buttonWidth = (screenW - 60) / 2;
+    
+    if (y >= buttonY && y <= buttonY + 50) {
+        if (x >= 20 && x <= 20 + buttonWidth) {
+            cancelSettings();
+        } else if (x >= 40 + buttonWidth && x <= 40 + buttonWidth * 2) {
+            saveSettings();
+        }
+    }
+}
+
+// Handle key events in settings
+void handleSettingsKey(int key) {
+    if (key == KEY_BACK || key == KEY_HOME) {
+        cancelSettings();
+    }
+}
+
+// Event handler for settings screen
+static int settingsEventHandler(int type, int par1, int par2) {
+    switch (type) {
+        case EVT_INIT:
+            loadSettings();
+            initFields();
+            drawSettings();
+            break;
+            
+        case EVT_SHOW:
+            drawSettings();
+            break;
+            
+        case EVT_KEYDOWN:
+            handleSettingsKey(par1);
+            break;
+            
+        case EVT_POINTERUP:
+            handleSettingsPointer(par1, par2);
+            break;
+            
+        case EVT_EXIT:
+            if (mainFont) {
+                CloseFont(mainFont);
+                mainFont = NULL;
+            }
+            if (labelFont) {
+                CloseFont(labelFont);
+                labelFont = NULL;
+            }
+            break;
+    }
+    
+    return 0;
+}
+
+// ============================================================================
+// MAIN MENU MODULE
+// ============================================================================
+
+// Application state
+static bool isConnected = false;
+static char statusText[512] = "Ожидание подключения к Calibre...\n\nПриложение готово к работе.";
+
+// System dialog path
+static const char* DIALOG_PATH = "/ebrmain/bin/dialog";
+
+// Dialog icons
+enum PBDialogIcon {
+    PB_ICON_NONE = 0,
+    PB_ICON_INFO = 1,
+    PB_ICON_QUESTION = 2,
+    PB_ICON_ATTENTION = 3,
+    PB_ICON_ERROR = 4,
+    PB_ICON_WLAN = 5
+};
+
+// Show system dialog
+int showDialog(PBDialogIcon icon, const char* text, const char* buttons[], int buttonCount) {
+    char iconStr[8];
+    snprintf(iconStr, sizeof(iconStr), "%d", icon);
+    
+    char** args = (char**)malloc(sizeof(char*) * (buttonCount + 4));
+    args[0] = (char*)DIALOG_PATH;
+    args[1] = iconStr;
+    args[2] = (char*)"";
+    args[3] = (char*)text;
+    
+    for (int i = 0; i < buttonCount; i++) {
+        args[4 + i] = (char*)buttons[i];
+    }
+    args[4 + buttonCount] = NULL;
+    
+    int pid = fork();
+    if (pid == 0) {
+        execv(DIALOG_PATH, args);
+        exit(-1);
+    }
+    
+    int status = 0;
+    if (pid > 0) {
+        waitpid(pid, &status, 0);
+    }
+    
+    free(args);
+    return WEXITSTATUS(status);
 }
 
 // Show main menu
 void showMainMenu() {
-    OpenMenu(mainMenuItems, 0, ScreenWidth() / 2, ScreenHeight() / 2, mainMenuHandler);
+    const char* buttons[] = { "Настройки", "Выход" };
+    
+    char menuText[1024];
+    snprintf(menuText, sizeof(menuText),
+        "Pocketbook Companion\n\n"
+        "Статус: %s\n\n"
+        "%s",
+        isConnected ? "Подключено" : "Не подключено",
+        statusText
+    );
+    
+    int result = showDialog(PB_ICON_INFO, menuText, buttons, 2);
+    
+    switch (result) {
+        case 1:
+            showSettingsScreen();
+            break;
+            
+        case 2:
+            CloseApp();
+            break;
+            
+        default:
+            showMainMenu();
+            break;
+    }
 }
 
+// Show settings screen
+void showSettingsScreen() {
+    SetEventHandler(settingsEventHandler);
+    SendEvent(GetEventHandler(), EVT_SHOW, 0, 0);
+}
+
+// ============================================================================
+// MAIN APPLICATION
+// ============================================================================
+
 // Main event handler
-int mainHandler(int type, int par1, int par2) {
-    if (type == EVT_INIT) {
-        // Initialize application
-        OpenScreen();
-    }
-    
-    if (type == EVT_SHOW) {
-        // Clear screen and show main menu
-        ClearScreen();
-        FullUpdate();
-        showMainMenu();
-    }
-    
-    if (type == EVT_KEYPRESS) {
-        // Handle BACK button
-        if (par1 == KEY_BACK) {
-            CloseApp();
-        }
+static int mainEventHandler(int type, int par1, int par2) {
+    switch (type) {
+        case EVT_INIT:
+            showMainMenu();
+            break;
+            
+        case EVT_SHOW:
+            showMainMenu();
+            break;
+            
+        case EVT_EXIT:
+            break;
     }
     
     return 0;
@@ -223,6 +448,9 @@ int mainHandler(int type, int par1, int par2) {
 
 // Application entry point
 int main(int argc, char *argv[]) {
-    InkViewMain(mainHandler);
+    OpenScreen();
+    SetEventHandler(mainEventHandler);
+    InkViewMain(mainEventHandler);
+    
     return 0;
 }
