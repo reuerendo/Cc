@@ -61,7 +61,7 @@ int showDialog(PBDialogIcon icon, const char* text, const char* buttons[], int b
 
 // Show main menu
 void showMainMenu() {
-    const char* buttons[] = { "Выход", "Настройки", "Обновить" };
+    const char* buttons[] = { "Настройки", "Выход" };
     
     char menuText[1024];
     snprintf(menuText, sizeof(menuText),
@@ -72,21 +72,15 @@ void showMainMenu() {
         statusText
     );
     
-    int result = showDialog(PB_ICON_INFO, menuText, buttons, 3);
+    int result = showDialog(PB_ICON_INFO, menuText, buttons, 2);
     
     switch (result) {
-        case 1:  // Выход
-            CloseApp();
-            break;
-            
-        case 2:  // Настройки
+        case 1:  // Настройки
             showSettingsMenu();
             break;
             
-        case 3:  // Обновить
-            // Здесь логика обновления статуса
-            strncpy(statusText, "Проверка подключения...", sizeof(statusText) - 1);
-            showMainMenu();
+        case 2:  // Выход
+            CloseApp();
             break;
     }
 }
@@ -116,35 +110,12 @@ void showSettingsMenu() {
     }
 }
 
-// Show initial confirmation
-void showInitialDialog() {
-    const char* buttons[] = { "Отмена", "Продолжить" };
-    
-    int result = showDialog(
-        PB_ICON_QUESTION,
-        "Pocketbook Companion\n\n"
-        "Это приложение позволяет синхронизировать\n"
-        "вашу библиотеку с Calibre.\n\n"
-        "Продолжить?",
-        buttons,
-        2
-    );
-    
-    if (result == 1) {
-        // Отмена
-        CloseApp();
-    } else {
-        // Продолжить - показать главное меню
-        showMainMenu();
-    }
-}
-
 // Application entry point
 int main(int argc, char *argv[]) {
     OpenScreen();
     
-    // Show initial dialog
-    showInitialDialog();
+    // Show main menu directly
+    showMainMenu();
     
     return 0;
 }
