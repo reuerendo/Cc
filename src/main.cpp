@@ -46,6 +46,7 @@ struct FieldInfo {
 
 static FieldInfo fieldInfo[FIELD_COUNT];
 static int currentField = -1;
+static imenu *currentMenu = NULL;
 
 void initFieldInfo() {
     fieldInfo[FIELD_IP] = {"IP адрес:", settings.ip, sizeof(settings.ip), false};
@@ -111,15 +112,15 @@ void saveSettings() {
 }
 
 // Forward declarations
-void showSettingsPanel();
-void showMainDialog();
+void showSettingsMenu();
+void showMainMenu();
 
 // Callback для ввода текста
 void keyboardCallback(char *text) {
     if (text && currentField >= 0 && currentField < FIELD_COUNT) {
         strncpy(fieldInfo[currentField].value, text, fieldInfo[currentField].maxLen - 1);
         fieldInfo[currentField].value[fieldInfo[currentField].maxLen - 1] = '\0';
-        showSettingsPanel();
+        showSettingsMenu();
     }
 }
 
@@ -128,185 +129,180 @@ void folderCallback(char *path) {
     if (path && path[0] != '\0') {
         strncpy(settings.inputFolder, path, sizeof(settings.inputFolder) - 1);
         settings.inputFolder[sizeof(settings.inputFolder) - 1] = '\0';
-        showSettingsPanel();
+        showSettingsMenu();
     }
 }
 
 // ============================================================================
-// SETTINGS PANEL
+// SETTINGS MENU
 // ============================================================================
 
-void settingsPanelHandler(int button) {
-    if (button == 1) {
-        // Save button
+void settingsMenuHandler(int index) {
+    // Menu closes automatically when handler is called
+    
+    if (currentMenu) {
+        for (int i = 0; i < FIELD_COUNT + 2; i++) {
+            if (currentMenu[i].text && currentMenu[i].type != ITEM_HEADER) {
+                free((void*)currentMenu[i].text);
+            }
+        }
+        free(currentMenu);
+        currentMenu = NULL;
+    }
+    
+    if (index == -1) {
+        // Cancel
+        showMainMenu();
+        return;
+    }
+    
+    if (index == 1000) {
+        // Save
         saveSettings();
+        showMainMenu();
+        return;
     }
-    // Dialog closes automatically, return to main dialog
-    showMainDialog();
+    
+    // Edit field
+    if (index >= 0 && index < FIELD_COUNT) {
+        currentField = index;
+        
+        if (fieldInfo[index].isFolder) {
+            char buffer[256];
+            strncpy(buffer, fieldInfo[index].value, sizeof(buffer) - 1);
+            buffer[sizeof(buffer) - 1] = '\0';
+            OpenDirectorySelector("Выберите папку", buffer, sizeof(buffer), folderCallback);
+        } else {
+            char buffer[256];
+            strncpy(buffer, fieldInfo[index].value, sizeof(buffer) - 1);
+            buffer[sizeof(buffer) - 1] = '\0';
+            
+            int keyboardType = (index == FIELD_PORT) ? KBD_NUMERIC : KBD_NORMAL;
+            OpenKeyboard(fieldInfo[index].label, buffer, fieldInfo[index].maxLen - 1, keyboardType, keyboardCallback);
+        }
+    }
 }
 
-void showSettingsPanel() {
-    char buffer[2048];
-    int offset = 0;
+void showSettingsMenu() {
+    currentMenu = (imenu*)calloc(FIELD_COUNT + 3, sizeof(imenu));
+    int menuIndex = 0;
     
-    // Build settings text
-    offset += snprintf(buffer + offset, sizeof(buffer) - offset, 
-                      "IP адрес: %s\n\n", settings.ip);
-    offset += snprintf(buffer + offset, sizeof(buffer) - offset, 
-                      "Порт: %s\n\n", settings.port);
+    // Header
+    currentMenu[menuIndex].type = ITEM_HEADER;
+    currentMenu[menuIndex].text = (char*)"Настройки";
+    menuIndex++;
     
-    // Mask password
-    if (strlen(settings.password) > 0) {
-        char masked[128];
-        int len = strlen(settings.password);
-        for (int j = 0; j < len && j < 127; j++) {
-            masked[j] = '*';
+    // Add settings fields
+    for (int i = 0; i < FIELD_COUNT; i++) {
+        char buffer[512];
+        
+        if (i == FIELD_PASSWORD && strlen(fieldInfo[i].value) > 0) {
+            char masked[128];
+            int len = strlen(fieldInfo[i].value);
+            for (int j = 0; j < len && j < 127; j++) {
+                masked[j] = '*';
+            }
+            masked[len] = '\0';
+            snprintf(buffer, sizeof(buffer), "%s %s", fieldInfo[i].label, masked);
+        } else {
+            snprintf(buffer, sizeof(buffer), "%s %s", fieldInfo[i].label, fieldInfo[i].value);
         }
-        masked[len] = '\0';
-        offset += snprintf(buffer + offset, sizeof(buffer) - offset, 
-                          "Пароль: %s\n\n", masked);
-    } else {
-        offset += snprintf(buffer + offset, sizeof(buffer) - offset, 
-                          "Пароль: \n\n");
+        
+        currentMenu[menuIndex].type = ITEM_ACTIVE;
+        currentMenu[menuIndex].text = strdup(buffer);
+        currentMenu[menuIndex].index = i;
+        menuIndex++;
     }
     
-    offset += snprintf(buffer + offset, sizeof(buffer) - offset, 
-                      "Read column: %s\n\n", settings.readColumn);
-    offset += snprintf(buffer + offset, sizeof(buffer) - offset, 
-                      "Read date column: %s\n\n", settings.readDateColumn);
-    offset += snprintf(buffer + offset, sizeof(buffer) - offset, 
-                      "Favorite column: %s\n\n", settings.favoriteColumn);
-    offset += snprintf(buffer + offset, sizeof(buffer) - offset, 
-                      "Input folder: %s", settings.inputFolder);
+    // Separator
+    currentMenu[menuIndex].type = ITEM_SEPARATOR;
+    currentMenu[menuIndex].text = NULL;
+    menuIndex++;
     
-    Dialog(ICON_INFORMATION, "Настройки", buffer, "OK", "Отмена", settingsPanelHandler);
+    // Save button
+    currentMenu[menuIndex].type = ITEM_ACTIVE;
+    currentMenu[menuIndex].text = (char*)"Сохранить";
+    currentMenu[menuIndex].index = 1000;
+    menuIndex++;
+    
+    OpenMenu(currentMenu, 0, 0, 0, settingsMenuHandler);
 }
 
 // ============================================================================
-// MAIN DIALOG
+// MAIN MENU
 // ============================================================================
 
-static ifont *titleFont = NULL;
-static ifont *textFont = NULL;
-static int panelX, panelY, panelW, panelH;
-
-void drawMainPanel() {
-    int screenW = ScreenWidth();
-    int screenH = ScreenHeight();
+void mainMenuHandler(int index) {
+    // Menu closes automatically when handler is called
     
-    // Calculate panel dimensions (60% of screen width, auto height)
-    panelW = (screenW * 60) / 100;
-    panelH = screenH / 3;
-    panelX = (screenW - panelW) / 2;
-    panelY = (screenH - panelH) / 2;
-    
-    // Clear screen
-    ClearScreen();
-    
-    // Draw panel background
-    SetColor(WHITE);
-    FillArea(panelX, panelY, panelW, panelH, WHITE);
-    
-    // Draw panel border
-    SetColor(BLACK);
-    DrawRect(panelX, panelY, panelW, panelH, BLACK);
-    
-    // Calculate positions
-    int titleY = panelY + 60;
-    int iconY = panelY + 20;
-    int iconSize = 48;
-    int settingsIconX = panelX + panelW - iconSize - 70;
-    int closeIconX = panelX + panelW - iconSize - 20;
-    
-    // Draw title
-    if (!titleFont) {
-        titleFont = OpenFont("LiberationSans-Bold", 32, 1);
-    }
-    if (titleFont) {
-        SetFont(titleFont, BLACK);
-        int titleW = StringWidth("Pocketbook Companion");
-        DrawString((screenW - titleW) / 2, titleY, "Pocketbook Companion");
+    if (currentMenu) {
+        free(currentMenu);
+        currentMenu = NULL;
     }
     
-    // Draw settings icon (gear symbol using text)
-    if (!textFont) {
-        textFont = OpenFont("LiberationSans", iconSize, 1);
+    switch (index) {
+        case 1:
+            // Settings
+            showSettingsMenu();
+            break;
+            
+        case 2:
+            // Exit
+            CloseApp();
+            break;
+            
+        default:
+            // Cancel
+            CloseApp();
+            break;
     }
-    if (textFont) {
-        SetFont(textFont, BLACK);
-        DrawString(settingsIconX, iconY + iconSize, "⚙");
-        
-        // Draw close icon (X symbol)
-        DrawString(closeIconX, iconY + iconSize, "✕");
-    }
-    
-    // Add status text
-    const char* statusText = "Статус: Не подключено";
-    if (textFont) {
-        SetFont(textFont, DGRAY);
-        int statusW = StringWidth(statusText);
-        DrawString((screenW - statusW) / 2, titleY + 80, statusText);
-    }
-    
-    FullUpdate();
 }
 
-int mainPanelHandler(int type, int par1, int par2) {
-    switch (type) {
-        case EVT_INIT:
-            drawMainPanel();
-            break;
-            
-        case EVT_SHOW:
-            drawMainPanel();
-            break;
-            
-        case EVT_POINTERUP: {
-            // Check if settings icon was clicked
-            int iconSize = 48;
-            int settingsIconX = panelX + panelW - iconSize - 70;
-            int closeIconX = panelX + panelW - iconSize - 20;
-            int iconY = panelY + 20;
-            
-            if (par1 >= settingsIconX && par1 <= settingsIconX + iconSize &&
-                par2 >= iconY && par2 <= iconY + iconSize) {
-                // Settings icon clicked
-                showSettingsPanel();
-                return 1;
-            }
-            
-            if (par1 >= closeIconX && par1 <= closeIconX + iconSize &&
-                par2 >= iconY && par2 <= iconY + iconSize) {
-                // Close icon clicked
-                CloseApp();
-                return 1;
-            }
-            break;
-        }
-        
-        case EVT_KEYPRESS:
-            if (par1 == KEY_BACK || par1 == KEY_HOME) {
-                CloseApp();
-                return 1;
-            }
-            break;
-    }
+void showMainMenu() {
+    currentMenu = (imenu*)calloc(4, sizeof(imenu));
+    int menuIndex = 0;
     
-    return 0;
-}
-
-void showMainDialog() {
-    SetEventHandler(mainPanelHandler);
-    drawMainPanel();
+    // Header
+    currentMenu[menuIndex].type = ITEM_HEADER;
+    currentMenu[menuIndex].text = (char*)"Pocketbook Companion";
+    menuIndex++;
+    
+    // Settings
+    currentMenu[menuIndex].type = ITEM_ACTIVE;
+    currentMenu[menuIndex].text = (char*)"Настройки";
+    currentMenu[menuIndex].index = 1;
+    menuIndex++;
+    
+    // Exit
+    currentMenu[menuIndex].type = ITEM_ACTIVE;
+    currentMenu[menuIndex].text = (char*)"Выход";
+    currentMenu[menuIndex].index = 2;
+    menuIndex++;
+    
+    OpenMenu(currentMenu, 0, 0, 0, mainMenuHandler);
 }
 
 // ============================================================================
 // MAIN APPLICATION
 // ============================================================================
 
+static int mainEventHandler(int type, int par1, int par2) {
+    switch (type) {
+        case EVT_INIT:
+            loadSettings();
+            initFieldInfo();
+            showMainMenu();
+            break;
+            
+        case EVT_SHOW:
+            showMainMenu();
+            break;
+    }
+    
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
-    loadSettings();
-    initFieldInfo();
-    InkViewMain(mainPanelHandler);
+    InkViewMain(mainEventHandler);
     return 0;
 }
