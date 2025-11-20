@@ -32,7 +32,7 @@ static iconfigedit configItems[] = {
         (char*)"Connection",          // text
         NULL,                         // hint
         (char*)KEY_CONNECTION_ENABLED,// name
-        (char*)"0",                   // default ("0" = выключено, "1" = включено)
+        (char*)"off",                   // default ("0" = выключено, "1" = включено)
         NULL,                         // <--- ИЗМЕНЕНИЕ: Варианты (onoff) здесь НЕ нужны, ставим NULL
         NULL,                         // submenu
         NULL                          // icon_theme
@@ -208,3 +208,4 @@ int main(int argc, char *argv[]) {
     InkViewMain(mainEventHandler);
     return 0;
 }
+
