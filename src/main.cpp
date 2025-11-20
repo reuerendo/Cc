@@ -30,14 +30,16 @@ static const char *onoff[] = { "Off", "On", NULL };
 
 // Config editor structure
 static iconfigedit configItems[] = {
-	{
-		CFG_CHOICE,
-		NULL,
-		(char*)"Connection",
-		(void*)onoff,
-		NULL,
-		NULL
-	},
+    {
+        CFG_CHOICE,          // type
+        NULL,                // icon
+        (char*)"Connection", // title
+        (void*)onoff,        // data (OK)
+        (char*)KEY_CONNECTION, // key (string!)
+        (char*)"0",          // default value
+        NULL,                // min
+        NULL                 // max
+    },
     {
         CFG_IPADDR,
         NULL,
