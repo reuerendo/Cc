@@ -4,7 +4,17 @@
 #include <stdio.h>
 
 // ============================================================================
-// APPLICATION STATE
+// КОНСТАНТЫ
+// ============================================================================
+
+#define PANEL_HEIGHT 70
+#define MARGIN 20
+#define ROW_HEIGHT 80
+#define LABEL_WIDTH 280
+#define FIELD_HEIGHT 60
+
+// ============================================================================
+// СТРУКТУРЫ
 // ============================================================================
 
 struct AppSettings {
@@ -29,11 +39,21 @@ static AppSettings settings = {
     false
 };
 
-// Menu items  
-static imenu menuItems[9];
+// Шрифты
+static ifont *fontNormal = NULL;
+static ifont *fontBold = NULL;
+static ifont *fontSmall = NULL;
+
+// Размеры экрана
+static int screenWidth = 0;
+static int screenHeight = 0;
+static int contentY = 0;
+
+// Текущее редактируемое поле
+static int selectedField = -1;
 
 // ============================================================================
-// SETTINGS MANAGEMENT
+// УПРАВЛЕНИЕ НАСТРОЙКАМИ
 // ============================================================================
 
 void loadSettings() {
@@ -91,7 +111,7 @@ void saveSettings() {
 }
 
 // ============================================================================
-// INPUT CALLBACKS
+// CALLBACK-ФУНКЦИИ ДЛЯ ВВОДА
 // ============================================================================
 
 void ipCallback(char *text) {
@@ -99,6 +119,7 @@ void ipCallback(char *text) {
         strncpy(settings.ip, text, sizeof(settings.ip) - 1);
         settings.ip[sizeof(settings.ip) - 1] = '\0';
         saveSettings();
+        FullUpdate();
     }
 }
 
@@ -107,6 +128,7 @@ void portCallback(char *text) {
         strncpy(settings.port, text, sizeof(settings.port) - 1);
         settings.port[sizeof(settings.port) - 1] = '\0';
         saveSettings();
+        FullUpdate();
     }
 }
 
@@ -115,6 +137,7 @@ void passwordCallback(char *text) {
         strncpy(settings.password, text, sizeof(settings.password) - 1);
         settings.password[sizeof(settings.password) - 1] = '\0';
         saveSettings();
+        FullUpdate();
     }
 }
 
@@ -123,6 +146,7 @@ void readColumnCallback(char *text) {
         strncpy(settings.readColumn, text, sizeof(settings.readColumn) - 1);
         settings.readColumn[sizeof(settings.readColumn) - 1] = '\0';
         saveSettings();
+        FullUpdate();
     }
 }
 
@@ -131,6 +155,7 @@ void readDateColumnCallback(char *text) {
         strncpy(settings.readDateColumn, text, sizeof(settings.readDateColumn) - 1);
         settings.readDateColumn[sizeof(settings.readDateColumn) - 1] = '\0';
         saveSettings();
+        FullUpdate();
     }
 }
 
@@ -139,6 +164,7 @@ void favoriteColumnCallback(char *text) {
         strncpy(settings.favoriteColumn, text, sizeof(settings.favoriteColumn) - 1);
         settings.favoriteColumn[sizeof(settings.favoriteColumn) - 1] = '\0';
         saveSettings();
+        FullUpdate();
     }
 }
 
@@ -147,176 +173,229 @@ void folderCallback(char *path) {
         strncpy(settings.inputFolder, path, sizeof(settings.inputFolder) - 1);
         settings.inputFolder[sizeof(settings.inputFolder) - 1] = '\0';
         saveSettings();
+        FullUpdate();
     }
 }
 
 // ============================================================================
-// MENU HANDLER
+// ОТРИСОВКА ИНТЕРФЕЙСА
 // ============================================================================
 
-void menuHandler(int index) {
+void drawSettingRow(const char *label, const char *value, int y, bool isPassword, int fieldIndex) {
+    // Отрисовка метки
+    SetFont(fontBold, BLACK);
+    DrawString(MARGIN, y, label);
+    
+    // Отрисовка рамки поля
+    int fieldX = MARGIN;
+    int fieldY = y + 35;
+    int fieldW = screenWidth - 2 * MARGIN;
+    
+    DrawRect(fieldX, fieldY, fieldW, FIELD_HEIGHT, BLACK);
+    FillArea(fieldX + 2, fieldY + 2, fieldW - 4, FIELD_HEIGHT - 4, WHITE);
+    
+    // Отрисовка значения
+    SetFont(fontNormal, BLACK);
+    char displayValue[256];
+    if (isPassword && strlen(value) > 0) {
+        strcpy(displayValue, "••••••••");
+    } else if (strlen(value) == 0) {
+        SetFont(fontSmall, DGRAY);
+        strcpy(displayValue, "Tap to set");
+    } else {
+        strncpy(displayValue, value, sizeof(displayValue) - 1);
+        displayValue[sizeof(displayValue) - 1] = '\0';
+    }
+    
+    DrawTextRect(fieldX + 15, fieldY + 5, fieldW - 30, FIELD_HEIGHT - 10, 
+                 displayValue, ALIGN_LEFT | VALIGN_MIDDLE);
+    
+    // Выделение активного поля
+    if (selectedField == fieldIndex) {
+        DrawRect(fieldX - 2, fieldY - 2, fieldW + 4, FIELD_HEIGHT + 4, BLACK);
+    }
+}
+
+void drawMainScreen() {
+    ClearScreen();
+    
+    // Панель сверху
+    DrawPanel(NULL, "", "Calibre Companion", 0);
+    
+    // Начало контента после панели
+    contentY = PanelHeight();
+    int y = contentY + MARGIN;
+    
+    // Заголовок раздела подключения
+    SetFont(fontBold, BLACK);
+    DrawString(MARGIN, y, "Connection");
+    y += 45;
+    
+    // Статус подключения с переключателем
+    SetFont(fontNormal, BLACK);
+    char statusText[64];
+    snprintf(statusText, sizeof(statusText), "Status: %s", 
+             settings.connectionEnabled ? "Enabled" : "Disabled");
+    DrawString(MARGIN, y, statusText);
+    y += ROW_HEIGHT + 10;
+    
+    // IP адрес
+    drawSettingRow("IP Address", settings.ip, y, false, 0);
+    y += ROW_HEIGHT + 20;
+    
+    // Порт
+    drawSettingRow("Port", settings.port, y, false, 1);
+    y += ROW_HEIGHT + 20;
+    
+    // Пароль
+    drawSettingRow("Password", settings.password, y, true, 2);
+    y += ROW_HEIGHT + 20;
+    
+    // Заголовок раздела настроек Calibre
+    SetFont(fontBold, BLACK);
+    DrawString(MARGIN, y, "Calibre Settings");
+    y += 45;
+    
+    // Read Status Column
+    drawSettingRow("Read Status Column", settings.readColumn, y, false, 3);
+    y += ROW_HEIGHT + 20;
+    
+    // Read Date Column
+    drawSettingRow("Read Date Column", settings.readDateColumn, y, false, 4);
+    y += ROW_HEIGHT + 20;
+    
+    // Favorite Column
+    drawSettingRow("Favorite Column", settings.favoriteColumn, y, false, 5);
+    y += ROW_HEIGHT + 20;
+    
+    // Input Folder
+    drawSettingRow("Input Folder", settings.inputFolder, y, false, 6);
+    
+    FullUpdate();
+}
+
+// ============================================================================
+// ОБРАБОТКА НАЖАТИЙ
+// ============================================================================
+
+int getFieldAtPoint(int x, int y) {
+    if (y < contentY) return -1;
+    
+    int fieldY = contentY + MARGIN + 45 + ROW_HEIGHT + 10; // После заголовка и статуса
+    
+    for (int i = 0; i < 7; i++) {
+        // Пропускаем заголовок "Calibre Settings" перед полем 3
+        if (i == 3) {
+            fieldY += 45; // Высота заголовка
+        }
+        
+        int fieldTop = fieldY + 35;
+        int fieldBottom = fieldTop + FIELD_HEIGHT;
+        
+        if (y >= fieldTop && y <= fieldBottom) {
+            return i;
+        }
+        
+        fieldY += ROW_HEIGHT + 20;
+    }
+    
+    return -1;
+}
+
+void handleFieldTap(int fieldIndex) {
     char buffer[256];
     
-    switch (index) {
-        case 0: // Connection toggle
-            settings.connectionEnabled = !settings.connectionEnabled;
-            saveSettings();
-            Message(ICON_INFORMATION, "Connection", 
-                    settings.connectionEnabled ? "Connection enabled" : "Connection disabled", 
-                    2000);
-            break;
-            
-        case 1: // IP Address
+    switch (fieldIndex) {
+        case 0: // IP Address
             strncpy(buffer, settings.ip, sizeof(buffer) - 1);
-            buffer[sizeof(buffer) - 1] = '\0';
             OpenKeyboard("IP Address", buffer, sizeof(buffer) - 1, KBD_NORMAL, ipCallback);
             break;
             
-        case 2: // Port
+        case 1: // Port
             strncpy(buffer, settings.port, sizeof(buffer) - 1);
-            buffer[sizeof(buffer) - 1] = '\0';
             OpenKeyboard("Port", buffer, sizeof(buffer) - 1, KBD_NUMERIC, portCallback);
             break;
             
-        case 3: // Password
+        case 2: // Password
             strncpy(buffer, settings.password, sizeof(buffer) - 1);
-            buffer[sizeof(buffer) - 1] = '\0';
             OpenKeyboard("Password", buffer, sizeof(buffer) - 1, KBD_PASSWORD, passwordCallback);
             break;
             
-        case 4: // Read Column
+        case 3: // Read Column
             strncpy(buffer, settings.readColumn, sizeof(buffer) - 1);
-            buffer[sizeof(buffer) - 1] = '\0';
             OpenKeyboard("Read Status Column", buffer, sizeof(buffer) - 1, KBD_NORMAL, readColumnCallback);
             break;
             
-        case 5: // Read Date Column
+        case 4: // Read Date Column
             strncpy(buffer, settings.readDateColumn, sizeof(buffer) - 1);
-            buffer[sizeof(buffer) - 1] = '\0';
             OpenKeyboard("Read Date Column", buffer, sizeof(buffer) - 1, KBD_NORMAL, readDateColumnCallback);
             break;
             
-        case 6: // Favorite Column
+        case 5: // Favorite Column
             strncpy(buffer, settings.favoriteColumn, sizeof(buffer) - 1);
-            buffer[sizeof(buffer) - 1] = '\0';
             OpenKeyboard("Favorite Column", buffer, sizeof(buffer) - 1, KBD_NORMAL, favoriteColumnCallback);
             break;
             
-        case 7: // Input Folder
+        case 6: // Input Folder
             strncpy(buffer, settings.inputFolder, sizeof(buffer) - 1);
-            buffer[sizeof(buffer) - 1] = '\0';
             OpenDirectorySelector("Input Folder", buffer, sizeof(buffer), folderCallback);
             break;
     }
 }
 
-// ============================================================================
-// MENU CREATION
-// ============================================================================
-
-void updateMenuItems() {
-    // Free old text if any
-    for (int i = 0; i < 8; i++) {
-        if (menuItems[i].text) {
-            free(menuItems[i].text);
-            menuItems[i].text = NULL;
-        }
-    }
-    
-    // Item 0: Connection toggle
-    menuItems[0].type = 1; // Regular menu item
-    menuItems[0].index = 0;
-    menuItems[0].text = (char *)malloc(128);
-    snprintf(menuItems[0].text, 128, "Connection: %s", 
-             settings.connectionEnabled ? "Enabled" : "Disabled");
-    menuItems[0].submenu = NULL;
-    
-    // Item 1: IP Address
-    menuItems[1].type = 1;
-    menuItems[1].index = 1;
-    menuItems[1].text = (char *)malloc(128);
-    snprintf(menuItems[1].text, 128, "IP Address: %s", settings.ip);
-    menuItems[1].submenu = NULL;
-    
-    // Item 2: Port
-    menuItems[2].type = 1;
-    menuItems[2].index = 2;
-    menuItems[2].text = (char *)malloc(64);
-    snprintf(menuItems[2].text, 64, "Port: %s", settings.port);
-    menuItems[2].submenu = NULL;
-    
-    // Item 3: Password
-    menuItems[3].type = 1;
-    menuItems[3].index = 3;
-    menuItems[3].text = (char *)malloc(128);
-    if (strlen(settings.password) > 0) {
-        snprintf(menuItems[3].text, 128, "Password: ••••••••");
-    } else {
-        snprintf(menuItems[3].text, 128, "Password: Not set");
-    }
-    menuItems[3].submenu = NULL;
-    
-    // Item 4: Read Column
-    menuItems[4].type = 1;
-    menuItems[4].index = 4;
-    menuItems[4].text = (char *)malloc(128);
-    snprintf(menuItems[4].text, 128, "Read Status Column: %s", settings.readColumn);
-    menuItems[4].submenu = NULL;
-    
-    // Item 5: Read Date Column
-    menuItems[5].type = 1;
-    menuItems[5].index = 5;
-    menuItems[5].text = (char *)malloc(128);
-    snprintf(menuItems[5].text, 128, "Read Date Column: %s", settings.readDateColumn);
-    menuItems[5].submenu = NULL;
-    
-    // Item 6: Favorite Column
-    menuItems[6].type = 1;
-    menuItems[6].index = 6;
-    menuItems[6].text = (char *)malloc(128);
-    snprintf(menuItems[6].text, 128, "Favorite Column: %s", settings.favoriteColumn);
-    menuItems[6].submenu = NULL;
-    
-    // Item 7: Input Folder
-    menuItems[7].type = 1;
-    menuItems[7].index = 7;
-    menuItems[7].text = (char *)malloc(300);
-    snprintf(menuItems[7].text, 300, "Input Folder: %s", settings.inputFolder);
-    menuItems[7].submenu = NULL;
-    
-    // Terminator
-    menuItems[8].type = 0;
-    menuItems[8].index = 0;
-    menuItems[8].text = NULL;
-    menuItems[8].submenu = NULL;
-}
-
-void cleanupMenuItems() {
-    for (int i = 0; i < 8; i++) {
-        if (menuItems[i].text) {
-            free(menuItems[i].text);
-            menuItems[i].text = NULL;
-        }
-    }
+void handleConnectionToggle() {
+    settings.connectionEnabled = !settings.connectionEnabled;
+    saveSettings();
+    drawMainScreen();
 }
 
 // ============================================================================
-// EVENT HANDLING
+// ОБРАБОТЧИК СОБЫТИЙ
 // ============================================================================
 
 int mainEventHandler(int type, int par1, int par2) {
     switch (type) {
         case EVT_INIT:
+            // Получение размеров экрана
+            screenWidth = ScreenWidth();
+            screenHeight = ScreenHeight();
+            
+            // Загрузка шрифтов
+            fontBold = OpenFont("LiberationSans-Bold", 28, 1);
+            fontNormal = OpenFont("LiberationSans", 24, 1);
+            fontSmall = OpenFont("LiberationSans", 20, 1);
+            
+            // Загрузка настроек
             loadSettings();
-            updateMenuItems();
-            // Open menu: array, selected index, x, y, handler
-            OpenMenu(menuItems, 0, 0, 0, menuHandler);
+            
+            // Отрисовка интерфейса
+            drawMainScreen();
             break;
             
         case EVT_SHOW:
-            // Update menu items when returning from keyboard/directory selector
-            updateMenuItems();
-            OpenMenu(menuItems, 0, 0, 0, menuHandler);
+            // Перерисовка при возврате из клавиатуры
+            drawMainScreen();
+            break;
+            
+        case EVT_POINTERUP:
+            {
+                int x = par1;
+                int y = par2;
+                
+                // Проверка нажатия на переключатель подключения
+                int statusY = contentY + MARGIN + 45;
+                if (y >= statusY && y <= statusY + 40 && x >= MARGIN && x <= screenWidth - MARGIN) {
+                    handleConnectionToggle();
+                    return 1;
+                }
+                
+                // Проверка нажатия на поля
+                int fieldIndex = getFieldAtPoint(x, y);
+                if (fieldIndex >= 0) {
+                    handleFieldTap(fieldIndex);
+                    return 1;
+                }
+            }
             break;
             
         case EVT_KEYPRESS:
@@ -327,7 +406,10 @@ int mainEventHandler(int type, int par1, int par2) {
             break;
             
         case EVT_EXIT:
-            cleanupMenuItems();
+            // Освобождение ресурсов
+            if (fontBold) CloseFont(fontBold);
+            if (fontNormal) CloseFont(fontNormal);
+            if (fontSmall) CloseFont(fontSmall);
             break;
     }
     
