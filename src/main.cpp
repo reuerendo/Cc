@@ -24,11 +24,11 @@ static const char *DEFAULT_PASSWORD = "";
 static const char *DEFAULT_READ_COLUMN = "#read";
 static const char *DEFAULT_READ_DATE_COLUMN = "#read_date";
 static const char *DEFAULT_FAVORITE_COLUMN = "#favorite";
-static const char *DEFAULT_INPUT_FOLDER = "/";
+static const char *DEFAULT_INPUT_FOLDER = "/mnt/ext1";
 
 // Config editor structure
 static const char *onoff[] = { "Off", "On", NULL };
-static const char *dir_variants[] = { "Select Folder", "/mnt", NULL };
+static char DEFAULT_INPUT_FOLDER[] = "/mnt/ext1";
 
 static iconfigedit configItems[] = {
     {
@@ -105,12 +105,12 @@ static iconfigedit configItems[] = {
 	{
         CFG_DIRECTORY,
         NULL,
-        (char*)"Input Folder",        // Текст пункта меню
-        NULL,                         // hint
-        (char*)KEY_INPUT_FOLDER,      // имя ключа в config
-        (char*)DEFAULT_INPUT_FOLDER,  // значение по умолчанию
-        (char**)dir_variants,         // <--- ИСПРАВЛЕНИЕ: Передаем массив параметров вместо NULL
-        NULL,                         // submenu
+        (char*)"Input Folder",        
+        NULL,                         
+        (char*)KEY_INPUT_FOLDER,      
+        DEFAULT_INPUT_FOLDER,         // Теперь это массив char[], каст (char*) не обязателен, но допустим
+        dir_variants,                 // Передаем массив вариантов
+        NULL,                        
         NULL
     },
     {
