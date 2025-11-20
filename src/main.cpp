@@ -151,15 +151,13 @@ void configItemChangedHandler(char *name) {
 void showMainScreen() {
     ClearScreen();
     
-	OpenConfigEditorEx(
-		"Connect to Calibre",
-		appConfig,
-		configItems,
-		configSaveHandler,
-		configItemChangedHandler,
-		CFGEDITOR_NO_SELF_UPDATE
-	);
-
+    OpenConfigEditor(
+        (char *)"Connect to Calibre",
+        appConfig,
+        configItems,
+        configSaveHandler,
+        configItemChangedHandler
+    );
 }
 
 int mainEventHandler(int type, int par1, int par2) {
@@ -189,10 +187,14 @@ int mainEventHandler(int type, int par1, int par2) {
             }
             break;
             
-		case EVT_PANEL_ICON:
+		case EVT_PANEL:
+            if (par1 == IV_KEY_HOME) {
                 saveAndCloseConfig();
-                CloseApp(); 
+                ClearScreen();  // Clear screen before closing
+                FullUpdate();   // Force update to show cleared screen
+                CloseApp();
                 return 1;
+            }
             break;
             
         case EVT_EXIT:
