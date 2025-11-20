@@ -40,7 +40,7 @@ target_link_libraries(${PROJECT_NAME}
 )
 
 # Установка имени выходного файла
-set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "calibre-companion.app")
+set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "connect-to-calibre.app")
 
 # Установка
 install(TARGETS ${PROJECT_NAME}
