@@ -35,18 +35,27 @@ jobs:
         sudo ln -sf /usr/lib/x86_64-linux-gnu/libgmp.so.10 /usr/lib/x86_64-linux-gnu/libgmp.so.3 || true
         sudo ldconfig
     
+    - name: Clean previous build
+      run: |
+        rm -rf build
+    
     - name: Create build directory
       run: mkdir -p build
     
     - name: Configure CMake
       run: |
         cd build
-        cmake .. -DCMAKE_TOOLCHAIN_FILE=../toolchain.cmake
+        cmake .. -DCMAKE_TOOLCHAIN_FILE=../toolchain.cmake -DCMAKE_BUILD_TYPE=Release
     
     - name: Build
       run: |
         cd build
-        cmake --build . --config Release
+        cmake --build . --config Release --verbose
+    
+    - name: Check binary size
+      run: |
+        ls -lh build/connect-to-calibre.app
+        file build/connect-to-calibre.app
     
     - name: Upload artifact
       uses: actions/upload-artifact@v4
@@ -61,5 +70,3 @@ jobs:
         files: build/connect-to-calibre.app
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-
