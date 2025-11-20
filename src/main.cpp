@@ -30,16 +30,20 @@ static AppSettings settings = {
 };
 
 // UI state
-static ifont *mainFont = NULL;
-static ifont *headerFont = NULL;
+static ifont *titleFont = NULL;
 static ifont *labelFont = NULL;
+static ifont *valueFont = NULL;
 static int screenWidth = 0;
 static int screenHeight = 0;
 static int currentEditField = -1;
-static const int HEADER_HEIGHT = 80;
-static const int PADDING = 20;
-static const int FIELD_HEIGHT = 60;
-static const int LABEL_WIDTH = 300;
+
+// Layout constants
+static const int STATUS_BAR_HEIGHT = 48;
+static const int TITLE_BAR_HEIGHT = 70;
+static const int HOME_ICON_SIZE = 48;
+static const int PADDING = 30;
+static const int ITEM_HEIGHT = 100;
+static const int TOGGLE_SIZE = 60;
 
 enum FieldIndex {
     FIELD_CONNECTION_TOGGLE = 0,
@@ -59,7 +63,6 @@ struct UIField {
     int maxLen;
     bool isFolder;
     bool isToggle;
-    int y;
 };
 
 static UIField uiFields[FIELD_COUNT];
@@ -69,21 +72,14 @@ static UIField uiFields[FIELD_COUNT];
 // ============================================================================
 
 void initUIFields() {
-    uiFields[FIELD_CONNECTION_TOGGLE] = {"Connection:", NULL, 0, false, true, 0};
-    uiFields[FIELD_IP] = {"IP Address:", settings.ip, sizeof(settings.ip), false, false, 0};
-    uiFields[FIELD_PORT] = {"Port:", settings.port, sizeof(settings.port), false, false, 0};
-    uiFields[FIELD_PASSWORD] = {"Password:", settings.password, sizeof(settings.password), false, false, 0};
-    uiFields[FIELD_READ_COLUMN] = {"Read status column:", settings.readColumn, sizeof(settings.readColumn), false, false, 0};
-    uiFields[FIELD_READ_DATE_COLUMN] = {"Read date column:", settings.readDateColumn, sizeof(settings.readDateColumn), false, false, 0};
-    uiFields[FIELD_FAVORITE_COLUMN] = {"Favorite column:", settings.favoriteColumn, sizeof(settings.favoriteColumn), false, false, 0};
-    uiFields[FIELD_INPUT_FOLDER] = {"Input folder:", settings.inputFolder, sizeof(settings.inputFolder), true, false, 0};
-    
-    // Calculate Y positions
-    int y = HEADER_HEIGHT + PADDING * 2;
-    for (int i = 0; i < FIELD_COUNT; i++) {
-        uiFields[i].y = y;
-        y += FIELD_HEIGHT + PADDING;
-    }
+    uiFields[FIELD_CONNECTION_TOGGLE] = {"Connection status", NULL, 0, false, true};
+    uiFields[FIELD_IP] = {"IP Address", settings.ip, sizeof(settings.ip), false, false};
+    uiFields[FIELD_PORT] = {"Port", settings.port, sizeof(settings.port), false, false};
+    uiFields[FIELD_PASSWORD] = {"Password", settings.password, sizeof(settings.password), false, false};
+    uiFields[FIELD_READ_COLUMN] = {"Read status column", settings.readColumn, sizeof(settings.readColumn), false, false};
+    uiFields[FIELD_READ_DATE_COLUMN] = {"Read date column", settings.readDateColumn, sizeof(settings.readDateColumn), false, false};
+    uiFields[FIELD_FAVORITE_COLUMN] = {"Favorite column", settings.favoriteColumn, sizeof(settings.favoriteColumn), false, false};
+    uiFields[FIELD_INPUT_FOLDER] = {"Input folder", settings.inputFolder, sizeof(settings.inputFolder), true, false};
 }
 
 void loadSettings() {
@@ -144,98 +140,110 @@ void saveSettings() {
 // UI DRAWING
 // ============================================================================
 
-void drawHeader() {
-    // Draw header background
-    FillArea(0, 0, screenWidth, HEADER_HEIGHT, WHITE);
-    DrawLine(0, HEADER_HEIGHT - 1, screenWidth, HEADER_HEIGHT - 1, BLACK);
+void drawTitleBar() {
+    int y = STATUS_BAR_HEIGHT;
     
-    // Draw title
-    SetFont(headerFont, BLACK);
-    int titleWidth = StringWidth("Pocketbook Companion");
-    DrawString((screenWidth - titleWidth) / 2, PADDING, "Pocketbook Companion");
+    // Draw separator line
+    DrawLine(0, y, screenWidth, y, BLACK);
+    
+    // Draw home icon area (left side)
+    int iconX = PADDING;
+    int iconY = y + (TITLE_BAR_HEIGHT - HOME_ICON_SIZE) / 2;
+    
+    // Simple home icon - house shape
+    DrawLine(iconX + HOME_ICON_SIZE/2, iconY + 5, iconX + 5, iconY + HOME_ICON_SIZE/2, BLACK);
+    DrawLine(iconX + HOME_ICON_SIZE/2, iconY + 5, iconX + HOME_ICON_SIZE - 5, iconY + HOME_ICON_SIZE/2, BLACK);
+    DrawRect(iconX + 10, iconY + HOME_ICON_SIZE/2, iconX + HOME_ICON_SIZE - 10, iconY + HOME_ICON_SIZE - 5, BLACK);
+    
+    // Draw title (centered)
+    SetFont(titleFont, BLACK);
+    const char* title = "CALIBRE COMPANION";
+    int titleWidth = StringWidth(title);
+    DrawString((screenWidth - titleWidth) / 2, y + (TITLE_BAR_HEIGHT - 28) / 2, title);
+    
+    // Draw bottom separator line
+    DrawLine(0, y + TITLE_BAR_HEIGHT, screenWidth, y + TITLE_BAR_HEIGHT, BLACK);
 }
 
-void drawToggleSwitch(int x, int y, bool enabled) {
-    const int toggleWidth = 80;
-    const int toggleHeight = 40;
-    const int toggleRadius = 20;
-    
-    // Draw background
-    int bgColor = enabled ? DGRAY : LGRAY;
-    FillArea(x, y, toggleWidth, toggleHeight, bgColor);
-    DrawRect(x, y, x + toggleWidth, y + toggleHeight, BLACK);
-    
+void drawToggleButton(int x, int y, bool enabled) {
     // Draw circle
-    int circleX = enabled ? x + toggleWidth - toggleRadius - 5 : x + toggleRadius + 5;
-    int circleY = y + toggleHeight / 2;
-    FillArea(circleX - toggleRadius, circleY - toggleRadius, 
-             toggleRadius * 2, toggleRadius * 2, WHITE);
-    DrawRect(circleX - toggleRadius, circleY - toggleRadius,
-             circleX + toggleRadius, circleY + toggleRadius, BLACK);
+    if (enabled) {
+        FillArea(x, y, TOGGLE_SIZE, TOGGLE_SIZE, DGRAY);
+    }
+    DrawRect(x, y, x + TOGGLE_SIZE, y + TOGGLE_SIZE, BLACK);
     
-    // Draw status text
-    SetFont(labelFont, BLACK);
-    const char* statusText = enabled ? "ON" : "OFF";
-    DrawString(x + toggleWidth + 20, y + 10, statusText);
+    // Draw checkmark if enabled
+    if (enabled) {
+        SetFont(valueFont, WHITE);
+        DrawString(x + 15, y + 12, "✓");
+    }
 }
 
-void drawField(int index) {
+void drawListItem(int index, int y) {
     UIField *field = &uiFields[index];
-    int y = field->y;
+    
+    // Draw separator line above
+    if (index > 0) {
+        DrawLine(PADDING, y, screenWidth - PADDING, y, LGRAY);
+    }
+    
+    int contentY = y + (ITEM_HEIGHT - 50) / 2;
     
     // Draw label
     SetFont(labelFont, BLACK);
-    DrawString(PADDING, y, field->label);
+    DrawString(PADDING, contentY, field->label);
     
     if (field->isToggle) {
-        // Draw toggle switch
-        drawToggleSwitch(PADDING + LABEL_WIDTH, y, settings.connectionEnabled);
+        // Draw toggle button on right
+        int toggleX = screenWidth - PADDING - TOGGLE_SIZE;
+        int toggleY = y + (ITEM_HEIGHT - TOGGLE_SIZE) / 2;
+        drawToggleButton(toggleX, toggleY, settings.connectionEnabled);
+        
+        // Draw status text
+        SetFont(valueFont, DGRAY);
+        const char* status = settings.connectionEnabled ? "Enabled" : "Disabled";
+        int statusWidth = StringWidth(status);
+        DrawString(toggleX - statusWidth - 20, contentY + 30, status);
     } else {
-        // Draw value box
-        int boxX = PADDING + LABEL_WIDTH;
-        int boxY = y - 5;
-        int boxWidth = screenWidth - boxX - PADDING;
-        int boxHeight = FIELD_HEIGHT - 10;
-        
-        // Draw box
-        FillArea(boxX, boxY, boxWidth, boxHeight, WHITE);
-        DrawRect(boxX, boxY, boxX + boxWidth, boxY + boxHeight, BLACK);
-        
         // Draw value text
-        SetFont(mainFont, BLACK);
+        SetFont(valueFont, DGRAY);
         if (field->value && field->value[0] != '\0') {
             char displayValue[256];
             if (index == FIELD_PASSWORD && strlen(field->value) > 0) {
                 // Mask password
-                int len = strlen(field->value);
-                for (int j = 0; j < len && j < 127; j++) {
-                    displayValue[j] = '*';
-                }
-                displayValue[len] = '\0';
+                strcpy(displayValue, "••••••••");
             } else {
                 strncpy(displayValue, field->value, sizeof(displayValue) - 1);
                 displayValue[sizeof(displayValue) - 1] = '\0';
             }
             
             // Truncate if too long
-            int maxWidth = boxWidth - 20;
+            int maxWidth = screenWidth - PADDING * 2 - 100;
             while (StringWidth(displayValue) > maxWidth && strlen(displayValue) > 0) {
                 displayValue[strlen(displayValue) - 1] = '\0';
             }
             
-            DrawString(boxX + 10, boxY + 15, displayValue);
+            DrawString(PADDING, contentY + 30, displayValue);
+        } else {
+            DrawString(PADDING, contentY + 30, "Not set");
         }
+        
+        // Draw arrow on right
+        int arrowX = screenWidth - PADDING - 20;
+        DrawString(arrowX, contentY + 5, "›");
     }
 }
 
 void drawUI() {
     ClearScreen();
     
-    drawHeader();
+    // Draw title bar with home button
+    drawTitleBar();
     
-    // Draw all fields
+    // Draw list items
+    int startY = STATUS_BAR_HEIGHT + TITLE_BAR_HEIGHT + 20;
     for (int i = 0; i < FIELD_COUNT; i++) {
-        drawField(i);
+        drawListItem(i, startY + i * ITEM_HEIGHT);
     }
     
     FullUpdate();
@@ -272,61 +280,52 @@ void folderCallback(char *path) {
 // EVENT HANDLING
 // ============================================================================
 
-int isInsideField(int x, int y, int fieldIndex) {
-    UIField *field = &uiFields[fieldIndex];
-    int fieldY = field->y;
+int getItemIndexAtY(int y) {
+    int startY = STATUS_BAR_HEIGHT + TITLE_BAR_HEIGHT + 20;
     
-    if (field->isToggle) {
-        // Check toggle switch area
-        int toggleX = PADDING + LABEL_WIDTH;
-        int toggleY = fieldY;
-        int toggleWidth = 80;
-        int toggleHeight = 40;
-        
-        return (x >= toggleX && x <= toggleX + toggleWidth &&
-                y >= toggleY && y <= toggleY + toggleHeight);
-    } else {
-        // Check value box area
-        int boxX = PADDING + LABEL_WIDTH;
-        int boxY = fieldY - 5;
-        int boxWidth = screenWidth - boxX - PADDING;
-        int boxHeight = FIELD_HEIGHT - 10;
-        
-        return (x >= boxX && x <= boxX + boxWidth &&
-                y >= boxY && y <= boxY + boxHeight);
+    for (int i = 0; i < FIELD_COUNT; i++) {
+        int itemY = startY + i * ITEM_HEIGHT;
+        if (y >= itemY && y < itemY + ITEM_HEIGHT) {
+            return i;
+        }
     }
+    
+    return -1;
 }
 
-void handleFieldClick(int fieldIndex) {
-    UIField *field = &uiFields[fieldIndex];
+bool isHomeIconClicked(int x, int y) {
+    int iconY = STATUS_BAR_HEIGHT;
+    return (x >= 0 && x <= HOME_ICON_SIZE + PADDING * 2 &&
+            y >= iconY && y <= iconY + TITLE_BAR_HEIGHT);
+}
+
+void handleItemClick(int index) {
+    UIField *field = &uiFields[index];
     
     if (field->isToggle) {
         // Toggle connection
         settings.connectionEnabled = !settings.connectionEnabled;
         saveSettings();
         drawUI();
-        
-        // Show status message
-        if (settings.connectionEnabled) {
-            Message(ICON_INFORMATION, "Connection", "Connection enabled", 1500);
-        } else {
-            Message(ICON_INFORMATION, "Connection", "Connection disabled", 1500);
-        }
     } else if (field->isFolder) {
         // Open folder selector
-        currentEditField = fieldIndex;
+        currentEditField = index;
         char buffer[256];
         strncpy(buffer, field->value, sizeof(buffer) - 1);
         buffer[sizeof(buffer) - 1] = '\0';
-        OpenDirectorySelector("Select folder", buffer, sizeof(buffer), folderCallback);
+        OpenDirectorySelector(field->label, buffer, sizeof(buffer), folderCallback);
     } else {
         // Open keyboard
-        currentEditField = fieldIndex;
+        currentEditField = index;
         char buffer[256];
-        strncpy(buffer, field->value, sizeof(buffer) - 1);
-        buffer[sizeof(buffer) - 1] = '\0';
+        if (field->value) {
+            strncpy(buffer, field->value, sizeof(buffer) - 1);
+            buffer[sizeof(buffer) - 1] = '\0';
+        } else {
+            buffer[0] = '\0';
+        }
         
-        int keyboardType = (fieldIndex == FIELD_PORT) ? KBD_NUMERIC : KBD_NORMAL;
+        int keyboardType = (index == FIELD_PORT) ? KBD_NUMERIC : KBD_NORMAL;
         OpenKeyboard(field->label, buffer, field->maxLen - 1, keyboardType, keyboardCallback);
     }
 }
@@ -337,9 +336,9 @@ int mainEventHandler(int type, int par1, int par2) {
             screenWidth = ScreenWidth();
             screenHeight = ScreenHeight();
             
-            headerFont = OpenFont("LiberationSans-Bold", 32, 1);
-            mainFont = OpenFont("LiberationSans", 24, 1);
-            labelFont = OpenFont("LiberationSans", 22, 1);
+            titleFont = OpenFont("LiberationSans-Bold", 28, 1);
+            labelFont = OpenFont("LiberationSans", 26, 1);
+            valueFont = OpenFont("LiberationSans", 24, 1);
             
             loadSettings();
             initUIFields();
@@ -351,12 +350,17 @@ int mainEventHandler(int type, int par1, int par2) {
             break;
             
         case EVT_POINTERUP:
-            // Check if click is inside any field
-            for (int i = 0; i < FIELD_COUNT; i++) {
-                if (isInsideField(par1, par2, i)) {
-                    handleFieldClick(i);
-                    return 1;
-                }
+            // Check home icon
+            if (isHomeIconClicked(par1, par2)) {
+                CloseApp();
+                return 1;
+            }
+            
+            // Check list items
+            int itemIndex = getItemIndexAtY(par2);
+            if (itemIndex >= 0) {
+                handleItemClick(itemIndex);
+                return 1;
             }
             break;
             
@@ -368,9 +372,9 @@ int mainEventHandler(int type, int par1, int par2) {
             break;
             
         case EVT_EXIT:
-            if (headerFont) CloseFont(headerFont);
-            if (mainFont) CloseFont(mainFont);
+            if (titleFont) CloseFont(titleFont);
             if (labelFont) CloseFont(labelFont);
+            if (valueFont) CloseFont(valueFont);
             break;
     }
     
