@@ -187,12 +187,10 @@ int mainEventHandler(int type, int par1, int par2) {
             }
             break;
             
-		case EVT_PANEL:
-            if (par1 == IV_KEY_HOME) {
+		case EVT_PANEL_ICON:
                 saveAndCloseConfig();
                 CloseApp(); 
                 return 1;
-            }
             break;
             
         case EVT_EXIT:
