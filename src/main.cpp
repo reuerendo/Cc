@@ -26,19 +26,17 @@ static const char *DEFAULT_READ_DATE_COLUMN = "#read_date";
 static const char *DEFAULT_FAVORITE_COLUMN = "#favorite";
 static const char *DEFAULT_INPUT_FOLDER = "/mnt/ext1/Books";
 
-static const char *onoff[] = { "Off", "On", NULL };
-
 // Config editor structure
 static iconfigedit configItems[] = {
     {
-        CFG_CHOICE,          // type
-        NULL,                // icon
-        (char*)"Connection", // title
-        (void*)onoff,        // data (OK)
+        CFG_CHECKBOX,  // Changed from CFG_CHOICE to CFG_CHECKBOX for toggle
         NULL,
-        (char*)"0",          // default value
-        NULL,                // min
-        NULL                 // max
+        (char *)"Connection",
+        NULL,
+        (char *)KEY_CONNECTION_ENABLED,
+        (char *)"0",
+        NULL,
+        NULL
     },
     {
         CFG_IPADDR,
@@ -100,14 +98,17 @@ static iconfigedit configItems[] = {
         NULL,
         NULL
     },
-    {
-        CFG_DIRECTORY,  // This type automatically provides folder picker
-        NULL,
-        (char *)"Input Folder",
-        NULL,
-        NULL,
-        NULL
-    },
+	{
+		CFG_DIRECTORY,
+		NULL,
+		(char*)"Input Folder",        // Текст пункта
+		NULL,                         // hint
+		(char*)KEY_INPUT_FOLDER,      // имя ключа в config
+		(char*)DEFAULT_INPUT_FOLDER,  // путь по умолчанию
+		NULL,                         // variants — всегда NULL
+		NULL,
+		NULL
+	},
     {
         0,
         NULL,
