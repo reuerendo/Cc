@@ -51,8 +51,8 @@ jobs:
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: calibre-companion
-        path: build/calibre-companion.app
+        name: connect-to-calibre
+        path: build/connect-to-calibre.app
         
     - name: Create release on tag
       if: startsWith(github.ref, 'refs/tags/')
@@ -61,4 +61,5 @@ jobs:
         files: build/connect-to-calibre.app
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 
