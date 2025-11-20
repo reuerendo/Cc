@@ -19,11 +19,11 @@ static const char *KEY_CONNECTION_ENABLED = "connection_enabled";
 
 // Default values
 static const char *DEFAULT_IP = "192.168.1.100";
-static const char *DEFAULT_PORT = "8080";
+static const char *DEFAULT_PORT = "9090";
 static const char *DEFAULT_PASSWORD = "";
-static const char *DEFAULT_READ_COLUMN = "Last Read";
-static const char *DEFAULT_READ_DATE_COLUMN = "Last Read Date";
-static const char *DEFAULT_FAVORITE_COLUMN = "Favorite";
+static const char *DEFAULT_READ_COLUMN = "#read";
+static const char *DEFAULT_READ_DATE_COLUMN = "#read_date";
+static const char *DEFAULT_FAVORITE_COLUMN = "#favorite";
 static const char *DEFAULT_INPUT_FOLDER = "/mnt/ext1/Books";
 
 // Connection status choices
@@ -72,15 +72,6 @@ static iconfigedit configItems[] = {
         NULL,
         (char *)KEY_PASSWORD,
         (char *)DEFAULT_PASSWORD,
-        NULL,
-        NULL
-    },
-    {
-        CFG_INFO,
-        NULL,
-        (char *)"Calibre Settings",
-        NULL,
-        NULL,
         NULL,
         NULL
     },
