@@ -24,7 +24,7 @@ static const char *DEFAULT_PASSWORD = "";
 static const char *DEFAULT_READ_COLUMN = "#read";
 static const char *DEFAULT_READ_DATE_COLUMN = "#read_date";
 static const char *DEFAULT_FAVORITE_COLUMN = "#favorite";
-static const char *DEFAULT_INPUT_FOLDER = "/mnt/ext1/Books";
+static const char *DEFAULT_INPUT_FOLDER = "/";
 
 // Config editor structure
 static const char *onoff[] = { "Off", "On", NULL };
