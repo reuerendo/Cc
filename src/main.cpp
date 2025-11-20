@@ -27,16 +27,19 @@ static const char *DEFAULT_FAVORITE_COLUMN = "#favorite";
 static const char *DEFAULT_INPUT_FOLDER = "/mnt/ext1/Books";
 
 // Config editor structure
+static const char *onoff[] = { "Off", "On", NULL };
+
 static iconfigedit configItems[] = {
     {
-        CFG_CHECKBOX,  // Changed from CFG_CHOICE to CFG_CHECKBOX for toggle
-        NULL,
-        (char *)"Connection",
-        NULL,
-        (char *)KEY_CONNECTION_ENABLED,
-        (char *)"0",
-        NULL,
-        NULL
+        CFG_CHOICE,           // type
+        NULL,                 // icon
+        (char*)"Connection",  // text
+        NULL,                 // hint
+        (char*)"connection",  // name (ключ!)
+        (char*)"0",           // default ("0" = Off)
+        (char**)onoff,        // variants <--- ВАЖНО: это поле #7
+        NULL,                 // submenu
+        NULL                  // icon_theme
     },
     {
         CFG_IPADDR,
