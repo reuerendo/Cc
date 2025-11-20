@@ -189,7 +189,7 @@ int mainEventHandler(int type, int par1, int par2) {
             
 		case EVT_PANEL:
             if (par1 == IV_KEY_HOME) {
-                OpenMainMenu(); 
+                saveAndCloseConfig();
                 CloseApp(); 
                 return 1;
             }
