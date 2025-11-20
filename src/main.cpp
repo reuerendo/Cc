@@ -15,8 +15,6 @@ static const char *KEY_READ_COLUMN = "read_column";
 static const char *KEY_READ_DATE_COLUMN = "read_date_column";
 static const char *KEY_FAVORITE_COLUMN = "favorite_column";
 static const char *KEY_CONNECTION = "connection_enabled";
-static const char *STATUS_DISCONNECTED = "Disconnected";
-static const char *STATUS_CONNECTED = "Connected";
 static const char *STATUS_CHECKING = "Checking…";
 
 // Default values
