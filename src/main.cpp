@@ -14,7 +14,10 @@ static const char *KEY_PASSWORD = "password";
 static const char *KEY_READ_COLUMN = "read_column";
 static const char *KEY_READ_DATE_COLUMN = "read_date_column";
 static const char *KEY_FAVORITE_COLUMN = "favorite_column";
-static const char *KEY_CONNECTION_ENABLED = "connection_enabled";
+static const char *KEY_CONNECTION = "connection_enabled";
+static const char *STATUS_DISCONNECTED = "Disconnected";
+static const char *STATUS_CONNECTED = "Connected";
+static const char *STATUS_CHECKING = "Checking…";
 
 // Default values
 static const char *DEFAULT_IP = "192.168.1.100";
@@ -27,15 +30,15 @@ static const char *DEFAULT_FAVORITE_COLUMN = "#favorite";
 // Config editor structure
 static iconfigedit configItems[] = {
 	{
-        CFG_CHOICE,                 // <--- ИЗМЕНЕНИЕ: Тип элемента "Чекбокс/Переключатель"
-        NULL,                         // icon
-        (char*)"Connection",          // text
-        NULL,                         // hint
-        (char*)KEY_CONNECTION_ENABLED,// name
-        (char*)"0",                   // default ("0" = выключено, "1" = включено)
-        NULL,                         // <--- ИЗМЕНЕНИЕ: Варианты (onoff) здесь НЕ нужны, ставим NULL
-        NULL,                         // submenu
-        NULL                          // icon_theme
+        CFG_INFO,
+        NULL,
+        (char*)"Connection",
+        NULL,
+        (char*)KEY_CONNECTION,// name
+        (char*)STATUS_CHECKING,
+        NULL,
+        NULL,
+        NULL
     },
     {
         CFG_IPADDR,
