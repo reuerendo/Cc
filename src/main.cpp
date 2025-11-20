@@ -28,14 +28,14 @@ static const char *DEFAULT_INPUT_FOLDER = "/mnt/ext1/Books";
 
 // Config editor structure
 static iconfigedit configItems[] = {
-    {
-        CFG_CHECKBOX,  // Changed from CFG_CHOICE to CFG_CHECKBOX for toggle
-        NULL,
-        (char *)"Connection",
-        NULL,
-        NULL,
-        NULL
-    },
+	{
+		CFG_CHOICE,
+		NULL,
+		(char*)"Connection",
+		(void*)onoff,
+		NULL,
+		NULL
+	},
     {
         CFG_IPADDR,
         NULL,
