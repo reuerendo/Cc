@@ -151,13 +151,15 @@ void configItemChangedHandler(char *name) {
 void showMainScreen() {
     ClearScreen();
     
-    OpenConfigEditor(
-        (char *)"Connect to Calibre",
-        appConfig,
-        configItems,
-        configSaveHandler,
-        configItemChangedHandler
-    );
+	OpenConfigEditorEx(
+		"Connect to Calibre",
+		appConfig,
+		configItems,
+		configSaveHandler,
+		configItemChangedHandler,
+		CFGEDITOR_NO_SELF_UPDATE
+	);
+
 }
 
 int mainEventHandler(int type, int par1, int par2) {
