@@ -211,8 +211,6 @@ void* connectionThreadFunc(void* arg) {
     logMsg("Connection thread started");
     isConnecting = true;
     
-    // Мы НЕ меняем статус на "Connecting..." в UI, оставляем "Disconnected" пока не подключимся
-    // или можно написать "Disconnected" явно, чтобы сбросить прошлые ошибки
     updateConnectionStatus("Disconnected");
     
     const char* ip = ReadString(appConfig, KEY_IP, DEFAULT_IP);
@@ -236,7 +234,6 @@ void* connectionThreadFunc(void* arg) {
     
     if (!networkManager->connectToServer(ip, port)) {
         logMsg("Connection failed");
-        // Статус остается Disconnected
         updateConnectionStatus("Disconnected");
         isConnecting = false;
         return NULL;
@@ -246,20 +243,17 @@ void* connectionThreadFunc(void* arg) {
     
     if (!protocol->performHandshake(password)) {
         logMsg("Handshake failed: %s", protocol->getErrorMessage().c_str());
-        updateConnectionStatus("Disconnected"); // Ошибка рукопожатия = Disconnected
+        updateConnectionStatus("Disconnected");
         networkManager->disconnect();
         isConnecting = false;
         return NULL;
     }
     
     logMsg("Handshake successful");
-    // ТОЛЬКО ЗДЕСЬ мы показываем пользователю Connected
     updateConnectionStatus("Connected");
     
-    // Handle messages loop
     protocol->handleMessages([](const std::string& status) {
         logMsg("Protocol activity: %s", status.c_str());
-        // Не обновляем UI статус на "Processing...", оставляем "Connected"
     });
     
     logMsg("Disconnecting");
@@ -275,7 +269,6 @@ void* connectionThreadFunc(void* arg) {
 void startConnection() {
     if (isConnecting) return;
     
-    // Check WiFi
     if (!ensureWiFiEnabled()) {
         int netStatus = QueryNetwork();
         if (!(netStatus & NET_CONNECTED)) {
@@ -317,16 +310,13 @@ void stopConnection() {
     logMsg("Stopping connection...");
     shouldStop = true;
     
-    // 1. Сначала закрываем сокеты/протокол, чтобы прервать блокирующие вызовы (recv/connect)
     if (protocol) {
         protocol->disconnect();
     }
     if (networkManager) {
-        // Это заставит select/recv вернуть ошибку в потоке
         networkManager->disconnect();
     }
 
-    // 2. Ждем завершения потока
     if (isConnecting) {
         logMsg("Waiting for thread join...");
         pthread_join(connectionThread, NULL);
@@ -356,7 +346,6 @@ void initConfig() {
     }
 
     if (appConfig) {
-        // При старте всегда сбрасываем в Disconnected, так как соединения явно нет
         snprintf(connectionStatusBuffer, sizeof(connectionStatusBuffer), "Disconnected");
         WriteString(appConfig, KEY_CONNECTION, "Disconnected");
     }
@@ -364,7 +353,6 @@ void initConfig() {
 
 void saveAndCloseConfig() {
     if (appConfig) {
-        // Перед выходом сохраняем Disconnected, чтобы при следующем запуске не висело Connected
         WriteString(appConfig, KEY_CONNECTION, "Disconnected");
         SaveConfig(appConfig);
         CloseConfig(appConfig);
@@ -406,7 +394,7 @@ int mainEventHandler(int type, int par1, int par2) {
             break;
             
         case EVT_KEYPRESS:
-            // Обработка физических кнопок
+            // Кнопка "Назад"
             if (par1 == IV_KEY_BACK || par1 == IV_KEY_PREV) {
                 logMsg("KEY_BACK pressed - Exiting");
                 stopConnection();
@@ -415,9 +403,9 @@ int mainEventHandler(int type, int par1, int par2) {
                 CloseApp();
                 return 1;
             }
-            // Кнопка "Домой" (физическая или через панель задач)
-            if (par1 == IV_KEY_HOME || par1 == IV_KEY_TASK) {
-                logMsg("KEY_HOME/TASK pressed - Exiting");
+            // Кнопка "Домой" / "Меню"
+            if (par1 == IV_KEY_HOME || par1 == IV_KEY_MENU) {
+                logMsg("KEY_HOME/MENU pressed - Exiting");
                 stopConnection();
                 saveAndCloseConfig();
                 closeLog();
@@ -427,20 +415,8 @@ int mainEventHandler(int type, int par1, int par2) {
             break;
             
         case EVT_PANEL:
-            // Обработка нажатий на системную панель (домик)
-            if (par1 == IV_KEY_HOME || par1 == IV_KEY_TASK) {
-                logMsg("EVT_PANEL Home pressed - Exiting");
-                stopConnection();
-                saveAndCloseConfig();
-                closeLog();
-                CloseApp();
-                return 1;
-            }
-            break;
-        
-        // Некоторые прошивки шлют это событие при нажатии на домик
-        case 21: // EVT_HOME в некоторых версиях SDK
-            logMsg("EVT_HOME (21) pressed - Exiting");
+            // Нажатие на экранную панель задач
+            logMsg("EVT_PANEL pressed - Exiting");
             stopConnection();
             saveAndCloseConfig();
             closeLog();
@@ -452,13 +428,6 @@ int mainEventHandler(int type, int par1, int par2) {
             stopConnection();
             saveAndCloseConfig();
             closeLog();
-            // CloseApp здесь не нужен, система уже закрывает
-            break;
-            
-        case EVT_POWEROFF:
-        case EVT_POWERSAVE:
-            logMsg("Power event - Stopping connection");
-            stopConnection();
             break;
     }
     
