@@ -11,6 +11,15 @@
 
 #define LOG_MSG(fmt, ...) { FILE* f = fopen("/mnt/ext1/system/calibre-connect.log", "a"); if(f) { fprintf(f, "[DB] " fmt "\n", ##__VA_ARGS__); fclose(f); } }
 
+// Helper to format Unix timestamp to ISO 8601 (for Calibre)
+static std::string formatIsoTime(time_t timestamp) {
+    if (timestamp == 0) return "";
+    char buffer[32];
+    struct tm* tm_info = gmtime(&timestamp);
+    strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%S+00:00", tm_info);
+    return std::string(buffer);
+}
+
 BookManager::BookManager() {
     booksDir = "/mnt/ext1"; 
 }
@@ -48,18 +57,12 @@ std::string BookManager::getFirstLetter(const std::string& str) {
     
     unsigned char first = (unsigned char)str[0];
     
-    // Проверка на буквы (isalnum) и пунктуацию (ispunct)
-    // Это приблизительный аналог Lua [%w%p] для ASCII.
-    // Для кириллицы toupper работает корректно только с setlocale, 
-    // но на устройстве обычно локаль utf8.
     if (isalnum(first) || ispunct(first)) {
         char upper = toupper(first);
         return std::string(1, upper);
     }
     
-    // Fallback: str:sub(1,2):upper()
     std::string res = str.substr(0, 2);
-    // Простой toupper для строки
     for (char & c : res) c = toupper((unsigned char)c);
     return res;
 }
@@ -115,7 +118,6 @@ std::string BookManager::getBookFilePath(const std::string& lpath) {
     else return booksDir + "/" + cleanLpath;
 }
 
-// Основной метод добавления/обновления книги (порт saveBookToDatabase)
 bool BookManager::addBook(const BookMetadata& metadata) {
     std::string fullPath = getBookFilePath(metadata.lpath);
     
@@ -166,7 +168,6 @@ bool BookManager::addBook(const BookMetadata& metadata) {
         sqlite3_finalize(stmt);
     }
 
-    // Используем authorSort если есть, иначе обычного автора
     std::string sortAuthor = metadata.authorSort.empty() ? metadata.authors : metadata.authorSort;
     std::string firstAuthorLetter = getFirstLetter(sortAuthor);
     std::string firstTitleLetter = getFirstLetter(metadata.title);
@@ -182,7 +183,6 @@ bool BookManager::addBook(const BookMetadata& metadata) {
             sqlite3_finalize(stmt);
         }
 
-        // При полном апдейте (файл перезаписан) мы обновляем ts_added как в pb-db.lua
         const char* updateBookSql = 
             "UPDATE books_impl SET title=?, first_title_letter=?, author=?, firstauthor=?, "
             "first_author_letter=?, series=?, numinseries=?, size=?, isbn=?, sort_title=?, "
@@ -192,15 +192,15 @@ bool BookManager::addBook(const BookMetadata& metadata) {
             sqlite3_bind_text(stmt, 1, metadata.title.c_str(), -1, SQLITE_TRANSIENT);
             sqlite3_bind_text(stmt, 2, firstTitleLetter.c_str(), -1, SQLITE_TRANSIENT);
             sqlite3_bind_text(stmt, 3, metadata.authors.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(stmt, 4, sortAuthor.c_str(), -1, SQLITE_TRANSIENT); // CORRECTED: Using sort author
-            sqlite3_bind_text(stmt, 5, firstAuthorLetter.c_str(), -1, SQLITE_TRANSIENT); // CORRECTED: Using sort author letter
+            sqlite3_bind_text(stmt, 4, sortAuthor.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 5, firstAuthorLetter.c_str(), -1, SQLITE_TRANSIENT);
             sqlite3_bind_text(stmt, 6, metadata.series.c_str(), -1, SQLITE_TRANSIENT);
             sqlite3_bind_int(stmt, 7, metadata.seriesIndex);
             sqlite3_bind_int64(stmt, 8, metadata.size);
             sqlite3_bind_text(stmt, 9, metadata.isbn.c_str(), -1, SQLITE_TRANSIENT);
             sqlite3_bind_text(stmt, 10, metadata.title.c_str(), -1, SQLITE_TRANSIENT);
             sqlite3_bind_int64(stmt, 11, now);
-            sqlite3_bind_int64(stmt, 12, now); // Обновляем дату добавления при перезаписи файла
+            sqlite3_bind_int64(stmt, 12, now);
             sqlite3_bind_int(stmt, 13, bookId);
             
             sqlite3_step(stmt);
@@ -265,14 +265,10 @@ bool BookManager::addBook(const BookMetadata& metadata) {
     return true;
 }
 
-// Метод для СИНХРОНИЗАЦИИ (вызывается при SEND_BOOK_METADATA)
-// Полностью повторяет логику PocketBookDBHandler:updateBookMetadata из pb-db.lua
-// НЕ обновляет books_impl (автора, название, дату добавления)
 bool BookManager::updateBookSync(const BookMetadata& metadata) {
     sqlite3* db = openDB();
     if (!db) return false;
 
-    // Находим ID книги
     int bookId = findBookIdByPath(db, metadata.lpath);
     
     if (bookId == -1) {
@@ -283,7 +279,6 @@ bool BookManager::updateBookSync(const BookMetadata& metadata) {
 
     sqlite3_exec(db, "BEGIN TRANSACTION", NULL, NULL, NULL);
 
-    // Обновляем ТОЛЬКО настройки (прочитано, избранное)
     int profileId = getCurrentProfileId(db);
     bool res = processBookSettings(db, bookId, metadata, profileId);
 
@@ -301,8 +296,7 @@ bool BookManager::updateBook(const BookMetadata& metadata) {
 bool BookManager::processBookSettings(sqlite3* db, int bookId, const BookMetadata& metadata, int profileId) {
     int completed = metadata.isRead ? 1 : 0;
     int favorite = metadata.isFavorite ? 1 : 0;
-    
-    int cpage = metadata.isRead ? 100 : 0; 
+    int cpage = metadata.isRead ? 100 : 0;
     
     time_t completedTs = 0;
     if (!metadata.lastReadDate.empty()) {
@@ -315,7 +309,7 @@ bool BookManager::processBookSettings(sqlite3* db, int bookId, const BookMetadat
             tm.tm_hour = H;
             tm.tm_min = M;
             tm.tm_sec = S;
-            completedTs = timegm(&tm); // UTC
+            completedTs = timegm(&tm); 
         } else {
             completedTs = time(NULL); 
         }
@@ -372,10 +366,8 @@ bool BookManager::deleteBook(const std::string& lpath) {
     std::string filePath = getBookFilePath(lpath);
     LOG_MSG("Deleting book: %s", filePath.c_str());
     
-    // 1. Удаляем физически
     remove(filePath.c_str());
 
-    // 2. Чистим БД
     sqlite3* db = openDB();
     if (!db) return false;
 
@@ -393,7 +385,6 @@ bool BookManager::deleteBook(const std::string& lpath) {
 
     sqlite3_exec(db, "BEGIN TRANSACTION", NULL, NULL, NULL);
 
-    // Ищем ID по имени файла и папке
     const char* findSql = 
         "SELECT f.id, f.book_id FROM files f "
         "JOIN folders fo ON f.folder_id = fo.id "
@@ -416,21 +407,18 @@ bool BookManager::deleteBook(const std::string& lpath) {
     }
 
     if (fileId != -1) {
-        // Удаляем из files
         const char* sql1 = "DELETE FROM files WHERE id = ?";
         if (sqlite3_prepare_v2(db, sql1, -1, &stmt, nullptr) == SQLITE_OK) {
             sqlite3_bind_int(stmt, 1, fileId);
             sqlite3_step(stmt);
             sqlite3_finalize(stmt);
         }
-        // Удаляем из books_settings
         const char* sql2 = "DELETE FROM books_settings WHERE bookid = ?";
         if (sqlite3_prepare_v2(db, sql2, -1, &stmt, nullptr) == SQLITE_OK) {
             sqlite3_bind_int(stmt, 1, bookId);
             sqlite3_step(stmt);
             sqlite3_finalize(stmt);
         }
-        // Удаляем из books_impl
         const char* sql3 = "DELETE FROM books_impl WHERE id = ?";
         if (sqlite3_prepare_v2(db, sql3, -1, &stmt, nullptr) == SQLITE_OK) {
             sqlite3_bind_int(stmt, 1, bookId);
@@ -446,24 +434,6 @@ bool BookManager::deleteBook(const std::string& lpath) {
     return true;
 }
 
-// Helper to format Unix timestamp to ISO 8601 (for Calibre)
-static std::string formatIsoTime(time_t timestamp) {
-    if (timestamp == 0) return "";
-    char buffer[32];
-    struct tm* tm_info = gmtime(&timestamp);
-    strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%S+00:00", tm_info);
-    return std::string(buffer);
-}
-
-// Helper to format Unix timestamp to ISO 8601 (for Calibre)
-static std::string formatIsoTime(time_t timestamp) {
-    if (timestamp == 0) return "";
-    char buffer[32];
-    struct tm* tm_info = gmtime(&timestamp);
-    strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%S+00:00", tm_info);
-    return std::string(buffer);
-}
-
 std::vector<BookMetadata> BookManager::getAllBooks() {
     std::vector<BookMetadata> books;
     sqlite3* db = openDB();
@@ -471,7 +441,6 @@ std::vector<BookMetadata> BookManager::getAllBooks() {
 
     int profileId = getCurrentProfileId(db);
     
-    // Исправленный SQL запрос: добавлено чтение completed, favorite, completed_ts
     std::string sql = 
         "SELECT b.id, b.title, b.author, b.series, b.numinseries, b.size, b.updated, "
         "f.filename, fo.name, bs.completed, bs.favorite, bs.completed_ts "
@@ -498,7 +467,6 @@ std::vector<BookMetadata> BookManager::getAllBooks() {
             meta.seriesIndex = sqlite3_column_int(stmt, 4);
             meta.size = sqlite3_column_int64(stmt, 5);
             
-            // Формируем LPATH
             const char* filename = (const char*)sqlite3_column_text(stmt, 7);
             const char* folder = (const char*)sqlite3_column_text(stmt, 8);
             
@@ -522,7 +490,7 @@ std::vector<BookMetadata> BookManager::getAllBooks() {
             if (meta.isRead && readTs > 0) {
                 meta.lastReadDate = formatIsoTime(readTs);
             }
-			
+            
             time_t updated = (time_t)sqlite3_column_int64(stmt, 6);
             meta.lastModified = formatIsoTime(updated);
 
@@ -541,9 +509,6 @@ int BookManager::getBookCount() {
     return getAllBooks().size();
 }
 
-// ================= КОЛЛЕКЦИИ (BOOKSHELVES) =================
-
-// Поиск ID книги по пути (lpath)
 int BookManager::findBookIdByPath(sqlite3* db, const std::string& lpath) {
     std::string fullPath = getBookFilePath(lpath);
     std::string folderName, fileName;
@@ -556,9 +521,6 @@ int BookManager::findBookIdByPath(sqlite3* db, const std::string& lpath) {
         folderName = fullPath.substr(0, lastSlash);
         fileName = fullPath.substr(lastSlash + 1);
     }
-    
-    // ВАЖНО: folder.name в БД PocketBook - это абсолютный путь без имени файла
-    // Например: /mnt/ext1/Books
     
     const char* sql = "SELECT f.book_id FROM files f JOIN folders fo ON f.folder_id = fo.id WHERE f.filename = ? AND fo.name = ?";
     sqlite3_stmt* stmt;
@@ -575,19 +537,16 @@ int BookManager::findBookIdByPath(sqlite3* db, const std::string& lpath) {
     return bookId;
 }
 
-// Получить или создать полку
 int BookManager::getOrCreateBookshelf(sqlite3* db, const std::string& name) {
     int shelfId = -1;
     time_t now = time(NULL);
     
-    // Проверяем существование
     const char* findSql = "SELECT id FROM bookshelfs WHERE name = ?";
     sqlite3_stmt* stmt;
     if (sqlite3_prepare_v2(db, findSql, -1, &stmt, nullptr) == SQLITE_OK) {
         sqlite3_bind_text(stmt, 1, name.c_str(), -1, SQLITE_TRANSIENT);
         if (sqlite3_step(stmt) == SQLITE_ROW) {
             shelfId = sqlite3_column_int(stmt, 0);
-            // Если была удалена, восстанавливаем
             const char* restoreSql = "UPDATE bookshelfs SET is_deleted = 0, ts = ? WHERE id = ?";
             sqlite3_stmt* stmt2;
             if (sqlite3_prepare_v2(db, restoreSql, -1, &stmt2, nullptr) == SQLITE_OK) {
@@ -614,11 +573,9 @@ int BookManager::getOrCreateBookshelf(sqlite3* db, const std::string& name) {
     return shelfId;
 }
 
-// Привязка книги к полке
 void BookManager::linkBookToShelf(sqlite3* db, int shelfId, int bookId) {
     time_t now = time(NULL);
     
-    // Проверяем, есть ли связь
     const char* checkSql = "SELECT 1 FROM bookshelfs_books WHERE bookshelfid = ? AND bookid = ?";
     bool exists = false;
     sqlite3_stmt* stmt;
@@ -630,7 +587,6 @@ void BookManager::linkBookToShelf(sqlite3* db, int shelfId, int bookId) {
     }
     
     if (exists) {
-        // Обновляем (восстанавливаем если удалена)
         const char* updateSql = "UPDATE bookshelfs_books SET is_deleted = 0, ts = ? WHERE bookshelfid = ? AND bookid = ?";
         if (sqlite3_prepare_v2(db, updateSql, -1, &stmt, nullptr) == SQLITE_OK) {
             sqlite3_bind_int64(stmt, 1, now);
@@ -640,7 +596,6 @@ void BookManager::linkBookToShelf(sqlite3* db, int shelfId, int bookId) {
             sqlite3_finalize(stmt);
         }
     } else {
-        // Создаем
         const char* insertSql = "INSERT INTO bookshelfs_books (bookshelfid, bookid, ts, is_deleted) VALUES (?, ?, ?, 0)";
         if (sqlite3_prepare_v2(db, insertSql, -1, &stmt, nullptr) == SQLITE_OK) {
             sqlite3_bind_int(stmt, 1, shelfId);
@@ -652,14 +607,12 @@ void BookManager::linkBookToShelf(sqlite3* db, int shelfId, int bookId) {
     }
 }
 
-// Основной метод синхронизации коллекций
 void BookManager::updateCollections(const std::map<std::string, std::vector<std::string>>& collections) {
     sqlite3* db = openDB();
     if (!db) return;
     
     sqlite3_exec(db, "BEGIN TRANSACTION", NULL, NULL, NULL);
     
-    // C++11 loop (fix for structured bindings)
     for (auto const& entry : collections) {
         const std::string& colName = entry.first;
         const std::vector<std::string>& lpaths = entry.second;

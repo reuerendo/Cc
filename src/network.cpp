@@ -42,11 +42,9 @@ static void logNetMsg(const char* format, ...) {
 NetworkManager::NetworkManager() 
     : socketFd(-1), udpSocketFd(-1) {
     initNetLog();
-    logNetMsg("NetworkManager created");
 }
 
 NetworkManager::~NetworkManager() {
-    logNetMsg("NetworkManager destructor called");
     disconnect();
     closeUDPSocket();
     
@@ -57,15 +55,11 @@ NetworkManager::~NetworkManager() {
 }
 
 bool NetworkManager::createUDPSocket() {
-    logNetMsg("Creating UDP socket");
-    
     udpSocketFd = socket(AF_INET, SOCK_DGRAM, 0);
     if (udpSocketFd < 0) {
         logNetMsg("Failed to create UDP socket: %s", strerror(errno));
         return false;
     }
-    
-    logNetMsg("UDP socket created: fd=%d", udpSocketFd);
     
     // Enable broadcast
     int broadcastEnable = 1;
@@ -76,8 +70,6 @@ bool NetworkManager::createUDPSocket() {
         udpSocketFd = -1;
         return false;
     }
-    
-    logNetMsg("Broadcast enabled");
     
     // Bind to any address on port 8134 (companion port)
     struct sockaddr_in bindAddr;
@@ -93,21 +85,17 @@ bool NetworkManager::createUDPSocket() {
         return false;
     }
     
-    logNetMsg("UDP socket bound to port 8134");
     return true;
 }
 
 void NetworkManager::closeUDPSocket() {
     if (udpSocketFd >= 0) {
-        logNetMsg("Closing UDP socket: fd=%d", udpSocketFd);
         close(udpSocketFd);
         udpSocketFd = -1;
     }
 }
 
 bool NetworkManager::sendUDPBroadcast(int port) {
-    logNetMsg("Sending UDP broadcast to port %d", port);
-    
     struct sockaddr_in broadcastAddr;
     memset(&broadcastAddr, 0, sizeof(broadcastAddr));
     broadcastAddr.sin_family = AF_INET;
@@ -123,13 +111,10 @@ bool NetworkManager::sendUDPBroadcast(int port) {
         return false;
     }
     
-    logNetMsg("UDP broadcast sent successfully: %d bytes", result);
     return true;
 }
 
 bool NetworkManager::receiveUDPResponse(std::string& host, int& port, int timeoutMs) {
-    logNetMsg("Waiting for UDP response (timeout: %dms)", timeoutMs);
-    
     struct timeval timeout;
     timeout.tv_sec = timeoutMs / 1000;
     timeout.tv_usec = (timeoutMs % 1000) * 1000;
@@ -140,9 +125,8 @@ bool NetworkManager::receiveUDPResponse(std::string& host, int& port, int timeou
     
     int result = select(udpSocketFd + 1, &readfds, NULL, NULL, &timeout);
     if (result <= 0) {
-        if (result == 0) {
-            logNetMsg("UDP receive timeout");
-        } else {
+        // Timeout is normal during discovery, only log errors
+        if (result < 0) {
             logNetMsg("UDP select error: %s", strerror(errno));
         }
         return false;
@@ -161,29 +145,25 @@ bool NetworkManager::receiveUDPResponse(std::string& host, int& port, int timeou
     }
     
     buffer[received] = '\0';
-    logNetMsg("UDP response received: %d bytes, data: %s", received, buffer);
     
     // Parse response: "calibre wireless device client (on hostname);content_port,socket_port"
     std::string response(buffer);
     size_t portPos = response.rfind(',');
     if (portPos == std::string::npos) {
-        logNetMsg("Failed to parse UDP response: no comma found");
         return false;
     }
     
     port = atoi(response.substr(portPos + 1).c_str());
     host = inet_ntoa(fromAddr.sin_addr);
     
-    logNetMsg("Parsed server info: host=%s, port=%d", host.c_str(), port);
     return port > 0;
 }
 
 bool NetworkManager::discoverCalibreServer(std::string& host, int& port,
                                            std::function<bool()> cancelCallback) {
-    logNetMsg("Starting Calibre server discovery");
+    logNetMsg("Starting Calibre server discovery...");
     
     if (!createUDPSocket()) {
-        logNetMsg("Failed to create UDP socket for discovery");
         return false;
     }
     
@@ -195,20 +175,18 @@ bool NetworkManager::discoverCalibreServer(std::string& host, int& port,
             return false;
         }
         
-        logNetMsg("Trying broadcast port %d/%d: %d", i+1, BROADCAST_PORT_COUNT, BROADCAST_PORTS[i]);
-        
         if (!sendUDPBroadcast(BROADCAST_PORTS[i])) {
             continue;
         }
         
         if (receiveUDPResponse(host, port, 3000)) {
-            logNetMsg("Server discovered successfully!");
+            logNetMsg("Server discovered at %s:%d", host.c_str(), port);
             closeUDPSocket();
             return true;
         }
     }
     
-    logNetMsg("Server discovery failed: no response from any port");
+    logNetMsg("Server discovery failed");
     closeUDPSocket();
     return false;
 }
@@ -222,8 +200,6 @@ bool NetworkManager::connectToServer(const std::string& host, int port) {
         return false;
     }
     
-    logNetMsg("TCP socket created: fd=%d", socketFd);
-    
     struct sockaddr_in serverAddr;
     memset(&serverAddr, 0, sizeof(serverAddr));
     serverAddr.sin_family = AF_INET;
@@ -236,20 +212,16 @@ bool NetworkManager::connectToServer(const std::string& host, int port) {
         return false;
     }
     
-    logNetMsg("Attempting connection...");
-    
     // Use blocking connect with timeout using select
     // First set socket to non-blocking
     int flags = fcntl(socketFd, F_GETFL, 0);
     if (flags < 0) {
-        logNetMsg("Failed to get socket flags: %s", strerror(errno));
         close(socketFd);
         socketFd = -1;
         return false;
     }
     
     if (fcntl(socketFd, F_SETFL, flags | O_NONBLOCK) < 0) {
-        logNetMsg("Failed to set non-blocking: %s", strerror(errno));
         close(socketFd);
         socketFd = -1;
         return false;
@@ -278,11 +250,7 @@ bool NetworkManager::connectToServer(const std::string& host, int port) {
         int selectResult = select(socketFd + 1, NULL, &writefds, NULL, &timeout);
         
         if (selectResult <= 0) {
-            if (selectResult == 0) {
-                logNetMsg("Connection timeout");
-            } else {
-                logNetMsg("Select error: %s", strerror(errno));
-            }
+            logNetMsg("Connection timeout or select error");
             close(socketFd);
             socketFd = -1;
             return false;
@@ -292,7 +260,6 @@ bool NetworkManager::connectToServer(const std::string& host, int port) {
         int error = 0;
         socklen_t len = sizeof(error);
         if (getsockopt(socketFd, SOL_SOCKET, SO_ERROR, &error, &len) < 0) {
-            logNetMsg("getsockopt failed: %s", strerror(errno));
             close(socketFd);
             socketFd = -1;
             return false;
@@ -308,87 +275,71 @@ bool NetworkManager::connectToServer(const std::string& host, int port) {
     
     // Set socket back to blocking mode
     if (fcntl(socketFd, F_SETFL, flags) < 0) {
-        logNetMsg("Failed to restore blocking mode: %s", strerror(errno));
         close(socketFd);
         socketFd = -1;
         return false;
     }
     
-    // Set receive and send timeouts
-    // УВЕЛИЧЕНО С 30 ДО 300 СЕКУНД (5 МИНУТ)
+    // Set receive and send timeouts (300 seconds = 5 minutes)
     struct timeval timeout;
     timeout.tv_sec = 300;
     timeout.tv_usec = 0;
     setsockopt(socketFd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     setsockopt(socketFd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
     
-    logNetMsg("Connected successfully to %s:%d", host.c_str(), port);
+    logNetMsg("Connected successfully");
     return true;
 }
 
 void NetworkManager::disconnect() {
     if (socketFd >= 0) {
-        logNetMsg("Disconnecting TCP socket: fd=%d", socketFd);
+        logNetMsg("Disconnecting TCP socket");
         close(socketFd);
         socketFd = -1;
     }
 }
 
 bool NetworkManager::sendAll(const void* data, size_t length) {
-    // logNetMsg("Sending %zu bytes", length);
-    
     const char* ptr = (const char*)data;
     size_t remaining = length;
-    size_t totalSent = 0;
     
     while (remaining > 0) {
         ssize_t sent = send(socketFd, ptr, remaining, 0);
         if (sent <= 0) {
             if (errno == EINTR) {
-                logNetMsg("Send interrupted, retrying");
                 continue;
             }
-            logNetMsg("Send failed: %s (sent %zu/%zu bytes)", strerror(errno), totalSent, length);
+            logNetMsg("Send failed: %s", strerror(errno));
             return false;
         }
         ptr += sent;
         remaining -= sent;
-        totalSent += sent;
     }
     
-    // logNetMsg("Sent %zu bytes successfully", totalSent);
     return true;
 }
 
 bool NetworkManager::receiveAll(void* buffer, size_t length) {
-    // logNetMsg("Receiving %zu bytes", length);
-    
     char* ptr = (char*)buffer;
     size_t remaining = length;
-    size_t totalReceived = 0;
     
     while (remaining > 0) {
         ssize_t received = recv(socketFd, ptr, remaining, 0);
         if (received <= 0) {
             if (errno == EINTR) {
-                logNetMsg("Receive interrupted, retrying");
                 continue;
             }
-            logNetMsg("Receive failed: %s (received %zu/%zu bytes)", strerror(errno), totalReceived, length);
+            logNetMsg("Receive failed: %s", strerror(errno));
             return false;
         }
         ptr += received;
         remaining -= received;
-        totalReceived += received;
     }
     
-    // logNetMsg("Received %zu bytes successfully", totalReceived);
     return true;
 }
 
 std::string NetworkManager::receiveString() {
-    logNetMsg("Receiving string with length prefix");
-    
     // Read length prefix (format: "1234[...")
     char lengthBuf[32];
     size_t lengthPos = 0;
@@ -396,7 +347,6 @@ std::string NetworkManager::receiveString() {
     while (lengthPos < sizeof(lengthBuf) - 1) {
         char c;
         if (!receiveAll(&c, 1)) {
-            logNetMsg("Failed to read length prefix");
             return "";
         }
         
@@ -409,7 +359,6 @@ std::string NetworkManager::receiveString() {
     }
     
     int dataLength = atoi(lengthBuf);
-    logNetMsg("String length: %d", dataLength);
     
     if (dataLength <= 0 || dataLength > 10 * 1024 * 1024) { // 10MB max
         logNetMsg("Invalid string length: %d", dataLength);
@@ -421,14 +370,11 @@ std::string NetworkManager::receiveString() {
     buffer[0] = '[';
     
     if (!receiveAll(&buffer[1], dataLength - 1)) {
-        logNetMsg("Failed to receive string data");
         return "";
     }
     
     buffer[dataLength] = '\0';
-    std::string result(buffer.data());
-    logNetMsg("Received string: %s", result.c_str());
-    return result;
+    return std::string(buffer.data());
 }
 
 bool NetworkManager::sendJSON(CalibreOpcode opcode, const char* jsonData) {
@@ -442,7 +388,8 @@ bool NetworkManager::sendJSON(CalibreOpcode opcode, const char* jsonData) {
     std::string message = "[" + std::to_string((int)opcode) + "," + jsonData + "]";
     std::string packet = std::to_string(message.length()) + message;
     
-    logNetMsg("Sending JSON: opcode=%d, message=%s", (int)opcode, message.c_str());
+    // Log only the opcode to avoid flooding logs with JSON data
+    logNetMsg("Sending JSON Opcode: %d", (int)opcode);
     
     return sendAll(packet.c_str(), packet.length());
 }
@@ -455,7 +402,6 @@ bool NetworkManager::receiveJSON(CalibreOpcode& opcode, std::string& jsonData) {
     
     std::string message = receiveString();
     if (message.empty()) {
-        logNetMsg("Received empty message");
         return false;
     }
     
@@ -471,7 +417,8 @@ bool NetworkManager::receiveJSON(CalibreOpcode& opcode, std::string& jsonData) {
     int opcodeValue = atoi(message.substr(1, opcodeEnd - 1).c_str());
     opcode = (CalibreOpcode)opcodeValue;
     
-    logNetMsg("Received JSON: opcode=%d, data=%s", (int)opcode, jsonData.c_str());
+    // Log only the opcode
+    logNetMsg("Received JSON Opcode: %d", (int)opcode);
     return true;
 }
 
@@ -481,7 +428,8 @@ bool NetworkManager::sendBinaryData(const void* data, size_t length) {
         return false;
     }
     
-    logNetMsg("Sending binary data: %zu bytes", length);
+    // Log only for large files or significant transfers if needed, 
+    // but keeping it minimal here.
     return sendAll(data, length);
 }
 
@@ -491,6 +439,5 @@ bool NetworkManager::receiveBinaryData(void* buffer, size_t length) {
         return false;
     }
     
-    logNetMsg("Receiving binary data: %zu bytes", length);
     return receiveAll(buffer, length);
 }
