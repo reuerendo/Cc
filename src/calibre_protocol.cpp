@@ -7,6 +7,13 @@
 #include <sstream>
 #include <iomanip>
 
+static std::string safeGetJsonString(json_object* val) {
+    if (!val) return "";
+    if (json_object_get_type(val) == json_type_null) return "";
+    const char* str = json_object_get_string(val);
+    return str ? std::string(str) : "";
+}
+
 // Helper for logging
 static void logProto(const char* fmt, ...) {
     FILE* f = fopen("/mnt/ext1/system/calibre-connect.log", "a");
@@ -436,13 +443,6 @@ std::string CalibreProtocol::parseJsonStringOrArray(json_object* val) {
     }
     
     return "";
-}
-
-static std::string safeGetJsonString(json_object* val) {
-    if (!val) return "";
-    if (json_object_get_type(val) == json_type_null) return "";
-    const char* str = json_object_get_string(val);
-    return str ? std::string(str) : "";
 }
 
 BookMetadata CalibreProtocol::jsonToMetadata(json_object* obj) {
