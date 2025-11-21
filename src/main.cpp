@@ -8,8 +8,8 @@
 #include <stdarg.h>
 #include <pthread.h>
 
-// Define DEBUG_LOG macro
-#define DEBUG_LOG(fmt, ...) logMsg(fmt, ##__VA_ARGS__)
+// Custom event for safe UI updates from thread - DEFINE BEFORE USE
+#define EVT_USER_UPDATE 20001
 
 // Debug logging
 static FILE* logFile = NULL;
@@ -84,6 +84,9 @@ static CalibreProtocol* protocol = NULL;
 static pthread_t connectionThread;
 static bool isConnecting = false;
 static bool shouldStop = false;
+
+// Forward declaration
+int mainEventHandler(int type, int par1, int par2);
 
 // Config editor structure
 static iconfigedit configItems[] = {
@@ -171,39 +174,26 @@ static iconfigedit configItems[] = {
 };
 
 void updateConnectionStatus(const char* status) {
-    // Только логируем все статусы
     logMsg("Status update: %s", status);
-    
-    // На экран выводим только статус
     snprintf(connectionStatusBuffer, sizeof(connectionStatusBuffer), "%s", status);
-    
-    if (appConfig) {
-        WriteString(appConfig, KEY_CONNECTION, status);
-    }
-    
-    SoftUpdate();
+    SendEvent(mainEventHandler, EVT_USER_UPDATE, 0, 0);
 }
 
 bool ensureWiFiEnabled() {
     logMsg("Checking WiFi status");
-    
     int netStatus = QueryNetwork();
-    
     if (netStatus & NET_WIFIREADY) {
         if (netStatus & NET_CONNECTED) {
             return true;
         }
         return false;
     }
-    
     logMsg("WiFi is not enabled, attempting to enable");
     int result = WiFiPower(NET_WIFI);
-    
     if (result != NET_OK) {
         logMsg("Failed to enable WiFi: %d", result);
         return false;
     }
-    
     return false;
 }
 
@@ -253,7 +243,7 @@ void* connectionThreadFunc(void* arg) {
     updateConnectionStatus("Connected");
     
     protocol->handleMessages([](const std::string& status) {
-        logMsg("Protocol activity: %s", status.c_str());
+        // Callback from protocol
     });
     
     logMsg("Disconnecting");
@@ -310,12 +300,8 @@ void stopConnection() {
     logMsg("Stopping connection...");
     shouldStop = true;
     
-    if (protocol) {
-        protocol->disconnect();
-    }
-    if (networkManager) {
-        networkManager->disconnect();
-    }
+    if (protocol) protocol->disconnect();
+    if (networkManager) networkManager->disconnect();
 
     if (isConnecting) {
         logMsg("Waiting for thread join...");
@@ -323,12 +309,12 @@ void stopConnection() {
         logMsg("Thread joined.");
         isConnecting = false;
     }
-    updateConnectionStatus("Disconnected");
+    
+    snprintf(connectionStatusBuffer, sizeof(connectionStatusBuffer), "Disconnected");
 }
 
 void initConfig() {
     iv_buildpath("/mnt/ext1/system/config");
-    
     appConfig = OpenConfig(CONFIG_FILE, configItems);
     
     if (!appConfig) {
@@ -379,8 +365,15 @@ void showMainScreen() {
     );
 }
 
+void cleanExit() {
+    logMsg("Clean exit initiated");
+    stopConnection();
+    saveAndCloseConfig();
+    closeLog();
+    CloseApp();
+}
+
 int mainEventHandler(int type, int par1, int par2) {
-    // Логируем все события для отладки
     if (type != EVT_POINTERMOVE && type != 49) {
         logMsg("Event: %d, p1: %d, p2: %d", type, par1, par2);
     }
@@ -406,36 +399,24 @@ int mainEventHandler(int type, int par1, int par2) {
         case EVT_KEYPRESS:
             if (par1 == IV_KEY_BACK || par1 == IV_KEY_PREV) {
                 logMsg("KEY_BACK pressed - Exiting");
-                stopConnection();
-                saveAndCloseConfig();
-                closeLog();
-                CloseApp();
+                cleanExit();
                 return 1;
             }
             if (par1 == IV_KEY_HOME || par1 == IV_KEY_MENU) {
                 logMsg("KEY_HOME/MENU pressed - Exiting");
-                stopConnection();
-                saveAndCloseConfig();
-                closeLog();
-                CloseApp();
+                cleanExit();
                 return 1;
             }
             break;
 
         case EVT_EXIT:
             logMsg("EVT_EXIT received");
-            stopConnection();
-            saveAndCloseConfig();
-            closeLog();
-            CloseApp();  // ← ДОБАВЬТЕ ЭТУ СТРОКУ
-            return 1;    // ← И ЭТУ
+            cleanExit();
+            return 1;
             
         case EVT_BACKGROUND:
             logMsg("EVT_BACKGROUND detected. Exiting.");
-            stopConnection();
-            saveAndCloseConfig();
-            closeLog();
-            CloseApp();
+            cleanExit();
             return 1;
 
         case EVT_PANEL:
@@ -443,10 +424,7 @@ int mainEventHandler(int type, int par1, int par2) {
         case EVT_PANEL_TASKLIST:
         case EVT_PANEL_OBREEY_SYNC:
             logMsg("Panel Event detected (%d). Exiting.", type);
-            stopConnection();
-            saveAndCloseConfig();
-            closeLog();
-            CloseApp();
+            cleanExit();
             return 1;
     }
     
