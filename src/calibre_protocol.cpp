@@ -528,7 +528,12 @@ bool CalibreProtocol::handleDisplayMessage(json_object* args) {
 }
 
 bool CalibreProtocol::handleNoop(json_object* args) {
-    // Just acknowledge - ejecting is handled in handleMessages
+    json_object* val = NULL;
+    if (json_object_object_get_ex(args, "count", &val) || 
+        json_object_object_get_ex(args, "priKey", &val)) {
+        return true;
+    }
+
     json_object* response = json_object_new_object();
     bool result = sendOKResponse(response);
     freeJSON(response);
