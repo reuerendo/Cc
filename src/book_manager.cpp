@@ -377,6 +377,84 @@ void BookManager::updateCollections(const std::map<std::string, std::vector<std:
 }
 
 bool BookManager::deleteBook(const std::string& lpath) {
-    // TODO: Реализовать удаление из files и books_impl
+    // 1. Удаляем файл с диска
+    std::string filePath = getBookFilePath(lpath);
+    if (remove(filePath.c_str()) != 0) {
+        // Если файла нет, возможно, он уже удален, продолжаем чистку БД
+        LOG_ERR("Failed to remove file: %s", filePath.c_str());
+    }
+
+    // 2. Чистим базу данных
+    sqlite3* db = openDB();
+    if (!db) return false;
+
+    // Разбираем путь для поиска в БД
+    std::string folderName, fileName;
+    size_t lastSlash = filePath.find_last_of('/');
+    if (lastSlash == std::string::npos) {
+        folderName = "";
+        fileName = filePath;
+    } else {
+        folderName = filePath.substr(0, lastSlash);
+        fileName = filePath.substr(lastSlash + 1);
+    }
+    
+    int storageId = getStorageId(filePath);
+
+    sqlite3_exec(db, "BEGIN TRANSACTION", NULL, NULL, NULL);
+
+    // Находим ID файла и книги
+    const char* findSql = 
+        "SELECT f.id, f.book_id FROM files f "
+        "JOIN folders fo ON f.folder_id = fo.id "
+        "WHERE f.filename = ? AND fo.name = ? AND f.storageid = ?";
+        
+    sqlite3_stmt* stmt;
+    int fileId = -1;
+    int bookId = -1;
+
+    if (sqlite3_prepare_v2(db, findSql, -1, &stmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_text(stmt, 1, fileName.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, folderName.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int(stmt, 3, storageId);
+        
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            fileId = sqlite3_column_int(stmt, 0);
+            bookId = sqlite3_column_int(stmt, 1);
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    if (fileId != -1) {
+        // Удаляем из files
+        const char* delFileSql = "DELETE FROM files WHERE id = ?";
+        if (sqlite3_prepare_v2(db, delFileSql, -1, &stmt, nullptr) == SQLITE_OK) {
+            sqlite3_bind_int(stmt, 1, fileId);
+            sqlite3_step(stmt);
+            sqlite3_finalize(stmt);
+        }
+
+        // Удаляем из books_settings
+        const char* delSettingsSql = "DELETE FROM books_settings WHERE bookid = ?";
+        if (sqlite3_prepare_v2(db, delSettingsSql, -1, &stmt, nullptr) == SQLITE_OK) {
+            sqlite3_bind_int(stmt, 1, bookId);
+            sqlite3_step(stmt);
+            sqlite3_finalize(stmt);
+        }
+
+        // Удаляем из books_impl
+        const char* delBookSql = "DELETE FROM books_impl WHERE id = ?";
+        if (sqlite3_prepare_v2(db, delBookSql, -1, &stmt, nullptr) == SQLITE_OK) {
+            sqlite3_bind_int(stmt, 1, bookId);
+            sqlite3_step(stmt);
+            sqlite3_finalize(stmt);
+        }
+    }
+
+    sqlite3_exec(db, "COMMIT", NULL, NULL, NULL);
+    // Очистка места (аналог VACUUM в pb-db.lua)
+    sqlite3_exec(db, "VACUUM", NULL, NULL, NULL);
+    
+    closeDB(db);
     return true;
 }

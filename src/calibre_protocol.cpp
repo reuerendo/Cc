@@ -732,16 +732,16 @@ bool CalibreProtocol::handleDeleteBook(json_object* args) {
         json_object* lpathObj = json_object_array_get_idx(lpathsObj, i);
         std::string lpath = json_object_get_string(lpathObj);
         
-        BookMetadata metadata;
-        if (bookManager->getBook("", metadata)) {
-            bookManager->deleteBook(metadata.uuid);
+        // ИСПРАВЛЕНИЕ: Вызываем deleteBook напрямую по пути
+        bookManager->deleteBook(lpath);
             
-            json_object* response = json_object_new_object();
-            json_object_object_add(response, "uuid", 
-                                  json_object_new_string(metadata.uuid.c_str()));
-            sendOKResponse(response);
-            freeJSON(response);
-        }
+        // Calibre ожидает подтверждение для каждого файла
+        json_object* response = json_object_new_object();
+        // Так как мы не храним UUID в системной БД, возвращаем пустую строку или lpath.
+        // driver.py использует это в основном для логов.
+        json_object_object_add(response, "uuid", json_object_new_string("")); 
+        sendOKResponse(response);
+        freeJSON(response);
     }
     
     return true;
