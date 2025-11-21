@@ -262,6 +262,7 @@ void CalibreProtocol::handleMessages(std::function<void(const std::string&)> sta
         }
         
         bool handled = false;
+        bool shouldDisconnect = false;
         
         switch (opcode) {
             case SET_CALIBRE_DEVICE_INFO:
@@ -329,7 +330,7 @@ void CalibreProtocol::handleMessages(std::function<void(const std::string&)> sta
                 handled = handleDisplayMessage(args);
                 break;
                 
-            case NOOP:
+            case NOOP: {
                 if (logFile) fprintf(logFile, "[PROTOCOL] Handling NOOP\n");
                 handled = handleNoop(args);
                 // Check if we should disconnect
@@ -337,30 +338,40 @@ void CalibreProtocol::handleMessages(std::function<void(const std::string&)> sta
                 json_object_object_get_ex(args, "ejecting", &ejectingObj);
                 if (ejectingObj && json_object_get_boolean(ejectingObj)) {
                     if (logFile) fprintf(logFile, "[PROTOCOL] Received ejecting NOOP\n");
-                    freeJSON(args);
-                    connected = false;
-                    if (logFile) {
-                        fprintf(logFile, "[PROTOCOL] Clean disconnect requested by calibre\n");
-                        fflush(logFile);
-                        fclose(logFile);
-                    }
-                    return;
+                    shouldDisconnect = true;
                 }
                 break;
+            }
                 
-            default:
+            case OK:
+            case SET_CALIBRE_DEVICE_NAME:
+            case GET_DEVICE_INFORMATION:
+            case GET_INITIALIZATION_INFO:
+            case BOOK_DONE:
+            case GET_BOOK_METADATA:
+            case CALIBRE_BUSY:
+            case ERROR_OPCODE:
                 if (logFile) {
-                    fprintf(logFile, "[PROTOCOL] Unknown opcode: %d\n", (int)opcode);
+                    fprintf(logFile, "[PROTOCOL] Unexpected opcode: %d\n", (int)opcode);
                     fflush(logFile);
                 }
-                errorMessage = "Unknown opcode: " + std::to_string((int)opcode);
-                // Send error response but don't disconnect
-                sendErrorResponse("Unknown opcode");
-                handled = true;  // Mark as handled to avoid error message
+                errorMessage = "Unexpected opcode: " + std::to_string((int)opcode);
+                sendErrorResponse("Unexpected opcode");
+                handled = true;
                 break;
         }
         
         freeJSON(args);
+        
+        if (shouldDisconnect) {
+            connected = false;
+            if (logFile) {
+                fprintf(logFile, "[PROTOCOL] Clean disconnect requested by calibre\n");
+                fflush(logFile);
+                fclose(logFile);
+            }
+            return;
+        }
         
         if (!handled) {
             if (logFile) {
