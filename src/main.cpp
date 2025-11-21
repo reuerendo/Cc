@@ -1,7 +1,7 @@
 #include "inkview.h"
 #include "network.h"
 #include "calibre_protocol.h"
-#include "book_manager.h"  // <-- Добавлено: необходимо подключить заголовок
+#include "book_manager.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -26,7 +26,7 @@ void initLog() {
 
 void logMsg(const char* format, ...) {
     if (!logFile) {
-        initLog(); // Try to reopen if closed
+        initLog(); 
         if (!logFile) return;
     }
     
@@ -65,6 +65,8 @@ static const char *KEY_READ_COLUMN = "read_column";
 static const char *KEY_READ_DATE_COLUMN = "read_date_column";
 static const char *KEY_FAVORITE_COLUMN = "favorite_column";
 static const char *KEY_CONNECTION = "connection_enabled";
+
+// Global connection status buffer
 static char connectionStatusBuffer[128] = "Disconnected"; 
 
 // Default values
@@ -77,7 +79,7 @@ static const char *DEFAULT_FAVORITE_COLUMN = "#favorite";
 
 // Connection state
 static NetworkManager* networkManager = NULL;
-static BookManager* bookManager = NULL; // <-- Добавлено: глобальная переменная
+static BookManager* bookManager = NULL;
 static CalibreProtocol* protocol = NULL;
 static pthread_t connectionThread;
 static bool isConnecting = false;
@@ -91,7 +93,7 @@ static iconfigedit configItems[] = {
         (char*)"Connection",
         NULL,
         (char*)KEY_CONNECTION,
-        connectionStatusBuffer, // <--- ИЗМЕНЕНО: ссылка на буфер
+        connectionStatusBuffer, 
         NULL,
         NULL,
         NULL
@@ -169,8 +171,10 @@ static iconfigedit configItems[] = {
 };
 
 void updateConnectionStatus(const char* status) {
+    // Только логируем все статусы
     logMsg("Status update: %s", status);
     
+    // На экран выводим только статус
     snprintf(connectionStatusBuffer, sizeof(connectionStatusBuffer), "%s", status);
     
     if (appConfig) {
@@ -184,45 +188,22 @@ bool ensureWiFiEnabled() {
     logMsg("Checking WiFi status");
     
     int netStatus = QueryNetwork();
-    logMsg("Network status: 0x%X", netStatus);
     
-    // Check if WiFi is ready
     if (netStatus & NET_WIFIREADY) {
-        logMsg("WiFi is ready");
-        
-        // Check if connected
         if (netStatus & NET_CONNECTED) {
-            logMsg("WiFi is connected");
             return true;
         }
-        
-        logMsg("WiFi is ready but not connected");
         return false;
     }
     
-    // WiFi is not enabled, try to enable it
     logMsg("WiFi is not enabled, attempting to enable");
-    
     int result = WiFiPower(NET_WIFI);
-    logMsg("WiFiPower result: %d", result);
     
     if (result != NET_OK) {
         logMsg("Failed to enable WiFi: %d", result);
         return false;
     }
     
-    // Wait for WiFi to become ready (up to 5 seconds)
-    for (int i = 0; i < 50; i++) {
-        usleep(100000); // 100ms
-        netStatus = QueryNetwork();
-        
-        if (netStatus & NET_WIFIREADY) {
-            logMsg("WiFi enabled successfully");
-            return false; // WiFi is ready but not connected yet
-        }
-    }
-    
-    logMsg("WiFi failed to become ready within timeout");
     return false;
 }
 
@@ -230,71 +211,61 @@ void* connectionThreadFunc(void* arg) {
     logMsg("Connection thread started");
     isConnecting = true;
     
-    updateConnectionStatus("Connecting...");
+    // Мы НЕ меняем статус на "Connecting..." в UI, оставляем "Disconnected" пока не подключимся
+    // или можно написать "Disconnected" явно, чтобы сбросить прошлые ошибки
+    updateConnectionStatus("Disconnected");
     
     const char* ip = ReadString(appConfig, KEY_IP, DEFAULT_IP);
     int port = ReadInt(appConfig, KEY_PORT, atoi(DEFAULT_PORT));
     
-    // Read password using ReadSecret to get the decrypted value
     const char* encryptedPassword = ReadString(appConfig, KEY_PASSWORD, DEFAULT_PASSWORD);
     std::string password;
     
     if (encryptedPassword && strlen(encryptedPassword) > 0) {
-        // If password starts with '$', it's encrypted - use ReadSecret to decrypt
         if (encryptedPassword[0] == '$') {
             const char* decrypted = ReadSecret(appConfig, KEY_PASSWORD, "");
-            if (decrypted && strlen(decrypted) > 0) {
-                password = decrypted;
-                logMsg("Using decrypted password (length: %d)", (int)password.length());
-            } else {
-                password = "";
-                logMsg("Password decryption returned empty string");
-            }
+            if (decrypted) password = decrypted;
         } else {
-            // Password is not encrypted yet, use as-is
             password = encryptedPassword;
-            logMsg("Using plaintext password (length: %d)", (int)password.length());
         }
     } else {
         password = "";
-        logMsg("No password configured");
     }
     
     logMsg("Connecting to %s:%d", ip, port);
     
-    // Connect to server
     if (!networkManager->connectToServer(ip, port)) {
         logMsg("Connection failed");
-        updateConnectionStatus("Connection failed");
+        // Статус остается Disconnected
+        updateConnectionStatus("Disconnected");
         isConnecting = false;
         return NULL;
     }
     
     logMsg("Connected, starting handshake");
-    updateConnectionStatus("Handshaking...");
     
-    // Perform handshake
     if (!protocol->performHandshake(password)) {
         logMsg("Handshake failed: %s", protocol->getErrorMessage().c_str());
-        updateConnectionStatus(protocol->getErrorMessage().c_str());
+        updateConnectionStatus("Disconnected"); // Ошибка рукопожатия = Disconnected
         networkManager->disconnect();
         isConnecting = false;
         return NULL;
     }
     
     logMsg("Handshake successful");
+    // ТОЛЬКО ЗДЕСЬ мы показываем пользователю Connected
     updateConnectionStatus("Connected");
     
-    // Handle messages
+    // Handle messages loop
     protocol->handleMessages([](const std::string& status) {
-        logMsg("Protocol status: %s", status.c_str());
-        updateConnectionStatus(status.c_str());
+        logMsg("Protocol activity: %s", status.c_str());
+        // Не обновляем UI статус на "Processing...", оставляем "Connected"
     });
     
-    // Cleanup after disconnect
     logMsg("Disconnecting");
     protocol->disconnect();
     networkManager->disconnect();
+    
     updateConnectionStatus("Disconnected");
     isConnecting = false;
     
@@ -302,26 +273,12 @@ void* connectionThreadFunc(void* arg) {
 }
 
 void startConnection() {
-    logMsg("startConnection called, isConnecting=%d", isConnecting);
+    if (isConnecting) return;
     
-    if (isConnecting) {
-        logMsg("Already connecting");
-        return;
-    }
-    
-    // Check and enable WiFi if needed
+    // Check WiFi
     if (!ensureWiFiEnabled()) {
         int netStatus = QueryNetwork();
-        
-        if (!(netStatus & NET_WIFIREADY)) {
-            updateConnectionStatus("WiFi not available");
-            Message(ICON_WARNING, "Network Error", 
-                    "Failed to enable WiFi. Please check WiFi settings.", 3000);
-            return;
-        }
-        
         if (!(netStatus & NET_CONNECTED)) {
-            updateConnectionStatus("WiFi not connected");
             Message(ICON_WARNING, "Network Error", 
                     "WiFi is not connected. Please connect to a WiFi network first.", 3000);
             return;
@@ -329,60 +286,54 @@ void startConnection() {
     }
     
     isConnecting = true;
+    shouldStop = false;
     
-    if (!networkManager) {
-        logMsg("Creating NetworkManager");
-        networkManager = new NetworkManager();
-    }
-
+    if (!networkManager) networkManager = new NetworkManager();
     if (!bookManager) {
-        logMsg("Creating BookManager");
         bookManager = new BookManager();
-        // Initialize the database path
-        std::string dbPath = "/mnt/ext1/system/config/calibre_books.db";
-        if (!bookManager->initialize(dbPath)) {
-             logMsg("Failed to initialize database");
-        }
+        bookManager->initialize("");
     }
     
     if (!protocol) {
-        logMsg("Creating CalibreProtocol");
-        
-        // Читаем настройки столбцов
         const char* readCol = ReadString(appConfig, KEY_READ_COLUMN, DEFAULT_READ_COLUMN);
         const char* readDateCol = ReadString(appConfig, KEY_READ_DATE_COLUMN, DEFAULT_READ_DATE_COLUMN);
         const char* favCol = ReadString(appConfig, KEY_FAVORITE_COLUMN, DEFAULT_FAVORITE_COLUMN);
         
-        // Создаем протокол с передачей этих настроек
         protocol = new CalibreProtocol(networkManager, bookManager, 
                                       readCol ? readCol : "", 
                                       readDateCol ? readDateCol : "", 
                                       favCol ? favCol : "");
     }
     
-    // Start connection in thread using pthread
-    logMsg("Creating connection thread");
     if (pthread_create(&connectionThread, NULL, connectionThreadFunc, NULL) != 0) {
         logMsg("Failed to create connection thread");
-        updateConnectionStatus("Failed to start");
+        updateConnectionStatus("Disconnected");
         isConnecting = false;
         return;
     }
-    logMsg("Connection thread started");
 }
 
 void stopConnection() {
+    logMsg("Stopping connection...");
     shouldStop = true;
     
-    if (isConnecting) {
-        if (protocol) {
-            protocol->disconnect();
-        }
-        if (networkManager) {
-            networkManager->disconnect();
-        }
-        pthread_join(connectionThread, NULL);
+    // 1. Сначала закрываем сокеты/протокол, чтобы прервать блокирующие вызовы (recv/connect)
+    if (protocol) {
+        protocol->disconnect();
     }
+    if (networkManager) {
+        // Это заставит select/recv вернуть ошибку в потоке
+        networkManager->disconnect();
+    }
+
+    // 2. Ждем завершения потока
+    if (isConnecting) {
+        logMsg("Waiting for thread join...");
+        pthread_join(connectionThread, NULL);
+        logMsg("Thread joined.");
+        isConnecting = false;
+    }
+    updateConnectionStatus("Disconnected");
 }
 
 void initConfig() {
@@ -405,13 +356,16 @@ void initConfig() {
     }
 
     if (appConfig) {
-        const char* savedStatus = ReadString(appConfig, KEY_CONNECTION, "Disconnected");
-        snprintf(connectionStatusBuffer, sizeof(connectionStatusBuffer), "%s", savedStatus);
+        // При старте всегда сбрасываем в Disconnected, так как соединения явно нет
+        snprintf(connectionStatusBuffer, sizeof(connectionStatusBuffer), "Disconnected");
+        WriteString(appConfig, KEY_CONNECTION, "Disconnected");
     }
 }
 
 void saveAndCloseConfig() {
     if (appConfig) {
+        // Перед выходом сохраняем Disconnected, чтобы при следующем запуске не висело Connected
+        WriteString(appConfig, KEY_CONNECTION, "Disconnected");
         SaveConfig(appConfig);
         CloseConfig(appConfig);
         appConfig = NULL;
@@ -419,18 +373,15 @@ void saveAndCloseConfig() {
 }
 
 void configSaveHandler() {
-    saveAndCloseConfig();
+    if (appConfig) SaveConfig(appConfig);
 }
 
 void configItemChangedHandler(char *name) {
-    if (appConfig) {
-        SaveConfig(appConfig);
-    }
+    if (appConfig) SaveConfig(appConfig);
 }
 
 void showMainScreen() {
     ClearScreen();
-    
     OpenConfigEditor(
         (char *)"Connect to Calibre",
         appConfig,
@@ -444,7 +395,7 @@ int mainEventHandler(int type, int par1, int par2) {
     switch (type) {
         case EVT_INIT:
             initLog();
-            logMsg("EVT_INIT received");
+            logMsg("EVT_INIT");
             SetPanelType(PANEL_ENABLED);
             initConfig();
             showMainScreen();
@@ -452,24 +403,23 @@ int mainEventHandler(int type, int par1, int par2) {
             break;
             
         case EVT_SHOW:
-            // Don't call FullUpdate - config editor handles updates
             break;
             
         case EVT_KEYPRESS:
+            // Обработка физических кнопок
             if (par1 == IV_KEY_BACK || par1 == IV_KEY_PREV) {
-                logMsg("Back key pressed");
+                logMsg("KEY_BACK pressed - Exiting");
                 stopConnection();
                 saveAndCloseConfig();
                 closeLog();
                 CloseApp();
                 return 1;
             }
-            if (par1 == IV_KEY_HOME) {
-                logMsg("Home key pressed");
+            // Кнопка "Домой" (физическая или через панель задач)
+            if (par1 == IV_KEY_HOME || par1 == IV_KEY_TASK) {
+                logMsg("KEY_HOME/TASK pressed - Exiting");
                 stopConnection();
                 saveAndCloseConfig();
-                ClearScreen();
-                FullUpdate();
                 closeLog();
                 CloseApp();
                 return 1;
@@ -477,23 +427,38 @@ int mainEventHandler(int type, int par1, int par2) {
             break;
             
         case EVT_PANEL:
-            if (par1 == IV_KEY_HOME) {
-                logMsg("Panel home pressed");
+            // Обработка нажатий на системную панель (домик)
+            if (par1 == IV_KEY_HOME || par1 == IV_KEY_TASK) {
+                logMsg("EVT_PANEL Home pressed - Exiting");
                 stopConnection();
                 saveAndCloseConfig();
-                ClearScreen();
-                FullUpdate();
                 closeLog();
                 CloseApp();
                 return 1;
             }
             break;
-            
+        
+        // Некоторые прошивки шлют это событие при нажатии на домик
+        case 21: // EVT_HOME в некоторых версиях SDK
+            logMsg("EVT_HOME (21) pressed - Exiting");
+            stopConnection();
+            saveAndCloseConfig();
+            closeLog();
+            CloseApp();
+            return 1;
+
         case EVT_EXIT:
             logMsg("EVT_EXIT received");
             stopConnection();
             saveAndCloseConfig();
             closeLog();
+            // CloseApp здесь не нужен, система уже закрывает
+            break;
+            
+        case EVT_POWEROFF:
+        case EVT_POWERSAVE:
+            logMsg("Power event - Stopping connection");
+            stopConnection();
             break;
     }
     
@@ -503,20 +468,9 @@ int mainEventHandler(int type, int par1, int par2) {
 int main(int argc, char *argv[]) {
     InkViewMain(mainEventHandler);
     
-    // Cleanup
-    if (protocol) {
-        delete protocol;
-        protocol = NULL;
-    }
-    if (networkManager) {
-        delete networkManager;
-        networkManager = NULL;
-    }
-    // <-- ИСПРАВЛЕНИЕ: Очистка памяти bookManager
-    if (bookManager) {
-        delete bookManager;
-        bookManager = NULL;
-    }
+    if (protocol) delete protocol;
+    if (networkManager) delete networkManager;
+    if (bookManager) delete bookManager;
     
     return 0;
 }
