@@ -5,7 +5,7 @@
 #include "book_manager.h"
 #include <string>
 #include <functional>
-#include <cstdio> // <--- Добавлено: необходимо для FILE*
+#include <cstdio>
 
 // Forward declarations
 struct json_object;
@@ -39,7 +39,7 @@ private:
     std::string currentBookLpath;
     long long currentBookLength;
     long long currentBookReceived;
-    FILE* currentBookFile; // <--- ИСПРАВЛЕНО: заменено с void* на FILE*
+    FILE* currentBookFile;
     
     // Protocol handlers
     bool handleGetInitializationInfo(json_object* args);
@@ -68,6 +68,7 @@ private:
     std::string jsonToString(json_object* obj);
     json_object* parseJSON(const std::string& jsonStr);
     void freeJSON(json_object* obj);
+    std::string parseJsonStringOrArray(json_object* val); // <--- ADDED THIS
     
     // Metadata conversion
     BookMetadata jsonToMetadata(json_object* obj);
