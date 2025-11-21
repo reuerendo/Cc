@@ -7,7 +7,7 @@
 #include <cstdlib>
 
 BookManager::BookManager() : db(nullptr) {
-    booksDir = "/mnt/ext1/Digital Editions/Calibre";
+    booksDir = "/mnt/ext1";
 }
 
 BookManager::~BookManager() {
@@ -313,4 +313,5 @@ bool BookManager::deleteBookFile(const std::string& lpath) {
 void BookManager::updateCollections(const std::map<std::string, std::vector<std::string>>& collections) {
     // TODO: Implement collection support
     // For now, collections can be stored as tags
+
 }
