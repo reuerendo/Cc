@@ -8,8 +8,8 @@
 #include <stdarg.h>
 #include <pthread.h>
 
-// Define DEBUG_LOG macro
-#define DEBUG_LOG(fmt, ...) logMsg(fmt, ##__VA_ARGS__)
+// Собственное событие для безопасного обновления UI из потока
+#define EVT_USER_UPDATE 20001
 
 // Debug logging
 static FILE* logFile = NULL;
@@ -84,6 +84,9 @@ static CalibreProtocol* protocol = NULL;
 static pthread_t connectionThread;
 static bool isConnecting = false;
 static bool shouldStop = false;
+
+// Forward declaration
+int mainEventHandler(int type, int par1, int par2);
 
 // Config editor structure
 static iconfigedit configItems[] = {
@@ -171,37 +174,33 @@ static iconfigedit configItems[] = {
 };
 
 void updateConnectionStatus(const char* status) {
+    // Пишем в буфер и лог сразу (память общая)
     logMsg("Status update: %s", status);
-    
     snprintf(connectionStatusBuffer, sizeof(connectionStatusBuffer), "%s", status);
     
-    if (appConfig) {
-        WriteString(appConfig, KEY_CONNECTION, status);
-    }
+    // НЕ вызываем SoftUpdate() напрямую из потока!
+    // Отправляем событие в основной цикл
+    SendEvent(mainEventHandler, EVT_USER_UPDATE, 0, 0);
     
-    SoftUpdate();
+    // Сохранение конфига лучше делать тоже в основном потоке, но пока оставим тут с осторожностью
+    // (лучше убрать WriteString отсюда, если будут проблемы)
 }
 
 bool ensureWiFiEnabled() {
     logMsg("Checking WiFi status");
-    
     int netStatus = QueryNetwork();
-    
     if (netStatus & NET_WIFIREADY) {
         if (netStatus & NET_CONNECTED) {
             return true;
         }
         return false;
     }
-    
     logMsg("WiFi is not enabled, attempting to enable");
     int result = WiFiPower(NET_WIFI);
-    
     if (result != NET_OK) {
         logMsg("Failed to enable WiFi: %d", result);
         return false;
     }
-    
     return false;
 }
 
@@ -251,8 +250,7 @@ void* connectionThreadFunc(void* arg) {
     updateConnectionStatus("Connected");
     
     protocol->handleMessages([](const std::string& status) {
-        // Keep logs but don't spam UI updates unless necessary
-        // logMsg("Protocol activity: %s", status.c_str());
+        // Callback из протокола
     });
     
     logMsg("Disconnecting");
@@ -309,25 +307,24 @@ void stopConnection() {
     logMsg("Stopping connection...");
     shouldStop = true;
     
-    if (protocol) {
-        protocol->disconnect();
-    }
-    if (networkManager) {
-        networkManager->disconnect();
-    }
+    // Разрываем сокеты, чтобы поток проснулся, если он висит в recv/connect
+    if (protocol) protocol->disconnect();
+    if (networkManager) networkManager->disconnect();
 
+    // Ждем поток, но не бесконечно (pthread_join блокирующий, но мы надеемся что disconnect сработает)
     if (isConnecting) {
         logMsg("Waiting for thread join...");
         pthread_join(connectionThread, NULL);
         logMsg("Thread joined.");
         isConnecting = false;
     }
-    updateConnectionStatus("Disconnected");
+    
+    // Обновляем статус напрямую, т.к. мы в основном потоке (обычно)
+    snprintf(connectionStatusBuffer, sizeof(connectionStatusBuffer), "Disconnected");
 }
 
 void initConfig() {
     iv_buildpath("/mnt/ext1/system/config");
-    
     appConfig = OpenConfig(CONFIG_FILE, configItems);
     
     if (!appConfig) {
@@ -379,8 +376,10 @@ void showMainScreen() {
 }
 
 int mainEventHandler(int type, int par1, int par2) {
-    // Global event logging to catch hidden events (like panel taps)
-    logMsg("Event: %d, p1: %d, p2: %d", type, par1, par2);
+    // Логируем все события для отладки
+    if (type != EVT_POINTERMOVE && type != 49) { // Не спамим движениями курсора
+        logMsg("Event: %d, p1: %d, p2: %d", type, par1, par2);
+    }
 
     switch (type) {
         case EVT_INIT:
@@ -392,7 +391,14 @@ int mainEventHandler(int type, int par1, int par2) {
             startConnection();
             break;
             
+        // Специальное событие для обновления UI из потока
+        case EVT_USER_UPDATE:
+            SoftUpdate();
+            break;
+            
         case EVT_SHOW:
+            // Если окно восстановилось, обновим экран
+            SoftUpdate();
             break;
             
         case EVT_KEYPRESS:
@@ -414,12 +420,21 @@ int mainEventHandler(int type, int par1, int par2) {
             }
             break;
             
-        // Handle ALL panel events to ensure Home/Task icon works
+        // Обработка нажатий на панель
         case EVT_PANEL:
         case EVT_PANEL_ICON:
         case EVT_PANEL_TASKLIST:
         case EVT_PANEL_OBREEY_SYNC:
             logMsg("Panel Event detected (%d). Exiting.", type);
+            stopConnection();
+            saveAndCloseConfig();
+            closeLog();
+            CloseApp();
+            return 1;
+
+        // Важно: событие ухода в фон (нажатие Home/Multitask часто вызывает это)
+        case EVT_BACKGROUND:
+            logMsg("EVT_BACKGROUND detected. Exiting.");
             stopConnection();
             saveAndCloseConfig();
             closeLog();
