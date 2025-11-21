@@ -16,7 +16,7 @@ static void logProto(const char* fmt, ...) {
         vfprintf(f, fmt, args);
         va_end(args);
         fprintf(f, "\n");
-        fflush(f); // Ensure write
+        fflush(f);
         fclose(f);
     }
 }
@@ -411,17 +411,45 @@ bool CalibreProtocol::handleSendBooklists(json_object* args) {
     return true;
 }
 
+// Helper to safely convert JSON array or string to string
+std::string CalibreProtocol::parseJsonStringOrArray(json_object* val) {
+    if (!val) return "";
+    
+    enum json_type type = json_object_get_type(val);
+    
+    if (type == json_type_string) {
+        return json_object_get_string(val);
+    } 
+    else if (type == json_type_array) {
+        std::string result;
+        int len = json_object_array_length(val);
+        for (int i = 0; i < len; i++) {
+            json_object* item = json_object_array_get_idx(val, i);
+            if (i > 0) result += ", ";
+            if (json_object_get_type(item) == json_type_string) {
+                result += json_object_get_string(item);
+            }
+        }
+        return result;
+    }
+    
+    return "";
+}
+
 BookMetadata CalibreProtocol::jsonToMetadata(json_object* obj) {
     BookMetadata metadata;
     
     json_object* val = NULL;
     
+    // Fixed parsing to handle both strings and arrays
     if (json_object_object_get_ex(obj, "uuid", &val))
         metadata.uuid = json_object_get_string(val);
     if (json_object_object_get_ex(obj, "title", &val))
         metadata.title = json_object_get_string(val);
+    
     if (json_object_object_get_ex(obj, "authors", &val))
-        metadata.authors = json_object_get_string(val);
+        metadata.authors = parseJsonStringOrArray(val);
+        
     if (json_object_object_get_ex(obj, "lpath", &val))
         metadata.lpath = json_object_get_string(val);
     if (json_object_object_get_ex(obj, "series", &val))
@@ -434,8 +462,10 @@ BookMetadata CalibreProtocol::jsonToMetadata(json_object* obj) {
         metadata.pubdate = json_object_get_string(val);
     if (json_object_object_get_ex(obj, "last_modified", &val))
         metadata.lastModified = json_object_get_string(val);
+        
     if (json_object_object_get_ex(obj, "tags", &val))
-        metadata.tags = json_object_get_string(val);
+        metadata.tags = parseJsonStringOrArray(val);
+        
     if (json_object_object_get_ex(obj, "comments", &val))
         metadata.comments = json_object_get_string(val);
     if (json_object_object_get_ex(obj, "size", &val))
@@ -467,9 +497,6 @@ json_object* CalibreProtocol::metadataToJson(const BookMetadata& metadata) {
     json_object_object_add(obj, "last_modified", json_object_new_string(metadata.lastModified.c_str()));
     json_object_object_add(obj, "size", json_object_new_int64(metadata.size));
     
-    // Note: We generally don't send the full thumbnail back to Calibre to save bandwidth
-    // unless explicitly requested, but for now we keep it simple.
-    
     return obj;
 }
 
@@ -498,8 +525,6 @@ bool CalibreProtocol::handleSendBook(json_object* args) {
     metadata.size = currentBookLength;
     
     // 1. Prepare File System FIRST (Critical Fix)
-    // We must ensure we can write the file BEFORE telling Calibre "OK, send it"
-    
     std::string filePath = bookManager->getBookFilePath(currentBookLpath);
     logProto("Target path: %s", filePath.c_str());
     
@@ -594,7 +619,7 @@ bool CalibreProtocol::handleDeleteBook(json_object* args) {
         std::string lpath = json_object_get_string(lpathObj);
         
         BookMetadata metadata;
-        if (bookManager->getBook("", metadata)) {  // Need to find by lpath
+        if (bookManager->getBook("", metadata)) {
             bookManager->deleteBook(metadata.uuid);
             
             json_object* response = json_object_new_object();
