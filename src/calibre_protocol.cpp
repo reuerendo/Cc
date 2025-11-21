@@ -229,8 +229,17 @@ void CalibreProtocol::handleMessages(std::function<void(const std::string&)> sta
                 fprintf(logFile, "[PROTOCOL] Failed to receive message\n");
                 fflush(logFile);
             }
-            errorMessage = "Connection lost";
-            connected = false;
+            // Check if this is normal disconnection
+            if (!network->isConnected()) {
+                if (logFile) {
+                    fprintf(logFile, "[PROTOCOL] Connection closed normally\n");
+                    fflush(logFile);
+                }
+                connected = false;
+            } else {
+                errorMessage = "Connection lost";
+                connected = false;
+            }
             break;
         }
         
@@ -323,6 +332,20 @@ void CalibreProtocol::handleMessages(std::function<void(const std::string&)> sta
             case NOOP:
                 if (logFile) fprintf(logFile, "[PROTOCOL] Handling NOOP\n");
                 handled = handleNoop(args);
+                // Check if we should disconnect
+                json_object* ejectingObj = NULL;
+                json_object_object_get_ex(args, "ejecting", &ejectingObj);
+                if (ejectingObj && json_object_get_boolean(ejectingObj)) {
+                    if (logFile) fprintf(logFile, "[PROTOCOL] Received ejecting NOOP\n");
+                    freeJSON(args);
+                    connected = false;
+                    if (logFile) {
+                        fprintf(logFile, "[PROTOCOL] Clean disconnect requested by calibre\n");
+                        fflush(logFile);
+                        fclose(logFile);
+                    }
+                    return;
+                }
                 break;
                 
             default:
@@ -363,7 +386,14 @@ void CalibreProtocol::handleMessages(std::function<void(const std::string&)> sta
 
 void CalibreProtocol::disconnect() {
     if (connected) {
-        // Send final NOOP with ejecting flag
+        FILE* logFile = fopen("/mnt/ext1/system/calibre-connect.log", "a");
+        if (logFile) {
+            fprintf(logFile, "[PROTOCOL] Disconnect called, sending final NOOP\n");
+            fflush(logFile);
+            fclose(logFile);
+        }
+        
+        // Send final NOOP with empty data - calibre expects this
         json_object* noopData = json_object_new_object();
         std::string noopStr = jsonToString(noopData);
         network->sendJSON(OK, noopStr.c_str());
@@ -487,13 +517,7 @@ bool CalibreProtocol::handleDisplayMessage(json_object* args) {
 }
 
 bool CalibreProtocol::handleNoop(json_object* args) {
-    json_object* ejectingObj = NULL;
-    json_object_object_get_ex(args, "ejecting", &ejectingObj);
-    
-    if (ejectingObj && json_object_get_boolean(ejectingObj)) {
-        connected = false;
-    }
-    
+    // Just acknowledge - ejecting is handled in handleMessages
     json_object* response = json_object_new_object();
     bool result = sendOKResponse(response);
     freeJSON(response);
