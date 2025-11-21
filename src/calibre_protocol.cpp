@@ -807,27 +807,29 @@ bool CalibreProtocol::handleDisplayMessage(json_object* args) {
 bool CalibreProtocol::handleNoop(json_object* args) {
     json_object* val = NULL;
     
-    // 1. Обработка запроса на отключение (Eject)
+    // 1. Handle Eject command
     if (json_object_object_get_ex(args, "ejecting", &val) && json_object_get_boolean(val)) {
         logProto("Received Eject command");
-        // Отправляем OK перед разрывом, как в wireless.lua
+        // Send OK before disconnecting
         json_object* response = json_object_new_object();
         sendOKResponse(response);
         freeJSON(response);
-        return true; // Вернем true, но disconnected флаг поставим в основном цикле handleMessages
+        // We return true here, but the disconnected flag should be handled 
+        // by checking the 'ejecting' param in the main loop if needed, 
+        // or relying on the logic in handleMessages
+        return true; 
     }
     
-    // 2. Обработка запроса конкретной книги по priKey (индексу)
+    // 2. Handle specific book request (priKey)
     if (json_object_object_get_ex(args, "priKey", &val)) {
         int index = json_object_get_int(val);
         logProto("Calibre requested details for book index: %d", index);
         
         if (index >= 0 && index < (int)sessionBooks.size()) {
-            // Отправляем ПОЛНЫЕ метаданные для запрошенной книги
+            // Send FULL metadata for the requested book
             json_object* bookJson = metadataToJson(sessionBooks[index]);
             
-            // Добавляем статус прочтения для синхронизации, если он есть
-            // (Поля _is_read_ и т.д. ожидает driver.py)
+            // Add sync status
             if (sessionBooks[index].isRead) {
                 json_object_object_add(bookJson, "_is_read_", json_object_new_boolean(true));
             }
@@ -836,7 +838,6 @@ bool CalibreProtocol::handleNoop(json_object* args) {
             freeJSON(bookJson);
         } else {
             logProto("Error: Requested priKey %d out of bounds", index);
-            // Отправляем пустой OK, чтобы не вешать протокол, но это ошибка логики
             json_object* resp = json_object_new_object();
             sendOKResponse(resp);
             freeJSON(resp);
@@ -844,11 +845,16 @@ bool CalibreProtocol::handleNoop(json_object* args) {
         return true;
     }
     
-    // 3. Обработка индикатора прогресса (count)
-    // Calibre может прислать {"count": X}, сообщая сколько книг он собирается запросить/обновить.
-    // Просто отвечаем OK.
+    // 3. Handle count notification (FIXED)
+    // Calibre sends {"count": X} to indicate batch size.
+    // It DOES NOT expect a response for this. Sending one desyncs the protocol.
+    if (json_object_object_get_ex(args, "count", &val)) {
+        logProto("Received batch count notification, ignoring response");
+        return true; // Return true but DO NOT sendOKResponse
+    }
     
-    // Стандартный ответ на пустой NOOP (Keep-alive)
+    // 4. Standard Keep-alive NOOP
+    // Only send OK if it is a standard keep-alive (empty args usually)
     json_object* response = json_object_new_object();
     bool result = sendOKResponse(response);
     freeJSON(response);
