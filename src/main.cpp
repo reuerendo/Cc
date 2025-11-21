@@ -8,7 +8,7 @@
 #include <stdarg.h>
 #include <pthread.h>
 
-// Custom event for safe UI updates from thread - DEFINE BEFORE USE
+// Custom event for safe UI updates from thread
 #define EVT_USER_UPDATE 20001
 
 // Debug logging
@@ -368,6 +368,14 @@ void showMainScreen() {
 void cleanExit() {
     logMsg("Clean exit initiated");
     stopConnection();
+    
+    // CRITICAL: Close ConfigEditor before CloseApp
+    logMsg("Closing config editor...");
+    CloseConfigLevel();
+    
+    // Small delay to let the UI update
+    usleep(100000); // 100ms
+    
     saveAndCloseConfig();
     closeLog();
     CloseApp();
