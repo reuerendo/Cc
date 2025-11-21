@@ -367,18 +367,23 @@ void showMainScreen() {
 
 void cleanExit() {
     logMsg("Clean exit initiated");
+    
+    // Stop connection thread
     stopConnection();
     
-    // CRITICAL: Close ConfigEditor before CloseApp
+    // Close config editor
     logMsg("Closing config editor...");
     CloseConfigLevel();
     
-    // Small delay to let the UI update
-    usleep(100000); // 100ms
-    
+    // Save and close config
     saveAndCloseConfig();
+    
+    // Close log before exit
     closeLog();
-    CloseApp();
+    
+    // Exit from InkViewMain loop
+    logMsg("Calling LeaveInkViewMain...");
+    LeaveInkViewMain();
 }
 
 int mainEventHandler(int type, int par1, int par2) {
@@ -442,9 +447,14 @@ int mainEventHandler(int type, int par1, int par2) {
 int main(int argc, char *argv[]) {
     InkViewMain(mainEventHandler);
     
+    // Cleanup after InkViewMain exits
+    logMsg("InkViewMain exited, cleaning up...");
+    
     if (protocol) delete protocol;
     if (networkManager) delete networkManager;
     if (bookManager) delete bookManager;
+    
+    closeLog();
     
     return 0;
 }
