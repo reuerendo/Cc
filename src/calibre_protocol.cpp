@@ -423,27 +423,55 @@ bool CalibreProtocol::handleSetLibraryInfo(json_object* args) {
 }
 
 bool CalibreProtocol::handleGetBookCount(json_object* args) {
-    int count = bookManager->getBookCount();
+    // 1. Загружаем все книги в сессионный кэш
+    sessionBooks = bookManager->getAllBooks();
+    int count = sessionBooks.size();
     
-    json_object* response = json_object_new_object();
-    json_object_object_add(response, "willStream", json_object_new_boolean(true));
-    json_object_object_add(response, "willScan", json_object_new_boolean(true));
-    json_object_object_add(response, "count", json_object_new_int(count));
-    
-    bool result = sendOKResponse(response);
-    freeJSON(response);
-    
-    if (count > 0) {
-        std::vector<BookMetadata> books = bookManager->getAllBooks();
-        for (const auto& book : books) {
-            json_object* bookJson = metadataToJson(book);
-            std::string bookStr = jsonToString(bookJson);
-            network->sendJSON(OK, bookStr.c_str());
-            freeJSON(bookJson);
-        }
+    // 2. Проверяем, хочет ли Calibre использовать кэш
+    bool useCache = false;
+    json_object* cacheObj = NULL;
+    if (json_object_object_get_ex(args, "willUseCachedMetadata", &cacheObj)) {
+        useCache = json_object_get_boolean(cacheObj);
     }
     
-    return result;
+    logProto("GetBookCount: %d books, useCache=%d", count, useCache);
+
+    // 3. Отправляем ответ с количеством
+    json_object* response = json_object_new_object();
+    json_object_object_add(response, "count", json_object_new_int(count));
+    // Эти флаги важны для драйвера SmartDevice
+    json_object_object_add(response, "willStream", json_object_new_boolean(true));
+    json_object_object_add(response, "willScan", json_object_new_boolean(true));
+    
+    if (!sendOKResponse(response)) {
+        freeJSON(response);
+        return false;
+    }
+    freeJSON(response);
+    
+    // 4. Отправляем список книг (по одной)
+    for (int i = 0; i < count; i++) {
+        json_object* bookJson = NULL;
+        
+        if (useCache) {
+            // Отправляем только краткую инфу + priKey (индекс)
+            bookJson = cachedMetadataToJson(sessionBooks[i], i);
+        } else {
+            // Отправляем полные метаданные
+            bookJson = metadataToJson(sessionBooks[i]);
+            // Даже в полных данных полезно добавить priKey, хотя не строго обязательно
+            json_object_object_add(bookJson, "priKey", json_object_new_int(i));
+        }
+        
+        std::string bookStr = jsonToString(bookJson);
+        if (!network->sendJSON(OK, bookStr.c_str())) {
+            freeJSON(bookJson);
+            return false;
+        }
+        freeJSON(bookJson);
+    }
+    
+    return true;
 }
 
 bool CalibreProtocol::handleSendBooklists(json_object* args) {
@@ -557,6 +585,17 @@ json_object* CalibreProtocol::metadataToJson(const BookMetadata& metadata) {
     json_object_object_add(obj, "last_modified", json_object_new_string(metadata.lastModified.c_str()));
     json_object_object_add(obj, "size", json_object_new_int64(metadata.size));
     
+    if (metadata.isRead) {
+        json_object_object_add(obj, "_is_read_", json_object_new_boolean(true));
+    } else {
+        json_object_object_add(obj, "_is_read_", json_object_new_boolean(false));
+    }
+    
+    if (!metadata.lastReadDate.empty()) {
+        json_object_object_add(obj, "_last_read_date_", json_object_new_string(metadata.lastReadDate.c_str()));
+    }
+    // ----------------------------------
+
     return obj;
 }
 
@@ -663,8 +702,20 @@ bool CalibreProtocol::handleSendBookMetadata(json_object* args) {
     
     BookMetadata metadata = jsonToMetadata(dataObj);
     
-    if (bookManager->hasMetadataChanged(metadata)) {
-        bookManager->updateMetadataCache(metadata);
+    json_object* val = NULL;
+    if (json_object_object_get_ex(dataObj, "_is_read_", &val)) {
+        metadata.isRead = json_object_get_boolean(val);
+    }
+    
+    logProto("Updating metadata for: %s", metadata.title.c_str());
+    
+    if (bookManager->updateBook(metadata)) {
+        for(auto& b : sessionBooks) {
+            if (b.uuid == metadata.uuid) {
+                b = metadata;
+                break;
+            }
+        }
     }
     
     return true;
@@ -755,11 +806,49 @@ bool CalibreProtocol::handleDisplayMessage(json_object* args) {
 
 bool CalibreProtocol::handleNoop(json_object* args) {
     json_object* val = NULL;
-    if (json_object_object_get_ex(args, "count", &val) || 
-        json_object_object_get_ex(args, "priKey", &val)) {
+    
+    // 1. Обработка запроса на отключение (Eject)
+    if (json_object_object_get_ex(args, "ejecting", &val) && json_object_get_boolean(val)) {
+        logProto("Received Eject command");
+        // Отправляем OK перед разрывом, как в wireless.lua
+        json_object* response = json_object_new_object();
+        sendOKResponse(response);
+        freeJSON(response);
+        return true; // Вернем true, но disconnected флаг поставим в основном цикле handleMessages
+    }
+    
+    // 2. Обработка запроса конкретной книги по priKey (индексу)
+    if (json_object_object_get_ex(args, "priKey", &val)) {
+        int index = json_object_get_int(val);
+        logProto("Calibre requested details for book index: %d", index);
+        
+        if (index >= 0 && index < (int)sessionBooks.size()) {
+            // Отправляем ПОЛНЫЕ метаданные для запрошенной книги
+            json_object* bookJson = metadataToJson(sessionBooks[index]);
+            
+            // Добавляем статус прочтения для синхронизации, если он есть
+            // (Поля _is_read_ и т.д. ожидает driver.py)
+            if (sessionBooks[index].isRead) {
+                json_object_object_add(bookJson, "_is_read_", json_object_new_boolean(true));
+            }
+            
+            sendOKResponse(bookJson);
+            freeJSON(bookJson);
+        } else {
+            logProto("Error: Requested priKey %d out of bounds", index);
+            // Отправляем пустой OK, чтобы не вешать протокол, но это ошибка логики
+            json_object* resp = json_object_new_object();
+            sendOKResponse(resp);
+            freeJSON(resp);
+        }
         return true;
     }
-
+    
+    // 3. Обработка индикатора прогресса (count)
+    // Calibre может прислать {"count": X}, сообщая сколько книг он собирается запросить/обновить.
+    // Просто отвечаем OK.
+    
+    // Стандартный ответ на пустой NOOP (Keep-alive)
     json_object* response = json_object_new_object();
     bool result = sendOKResponse(response);
     freeJSON(response);
@@ -806,4 +895,27 @@ void CalibreProtocol::freeJSON(json_object* obj) {
     if (obj) {
         json_object_put(obj);
     }
+}
+
+json_object* CalibreProtocol::cachedMetadataToJson(const BookMetadata& metadata, int index) {
+    json_object* obj = json_object_new_object();
+    
+    json_object_object_add(obj, "priKey", json_object_new_int(index));
+    json_object_object_add(obj, "uuid", json_object_new_string(metadata.uuid.c_str()));
+    json_object_object_add(obj, "lpath", json_object_new_string(metadata.lpath.c_str()));
+    
+    if (!metadata.lastModified.empty()) {
+        json_object_object_add(obj, "last_modified", json_object_new_string(metadata.lastModified.c_str()));
+    } else {
+        json_object_object_add(obj, "last_modified", json_object_new_string("1970-01-01T00:00:00+00:00"));
+    }
+    
+    std::string ext = "";
+    size_t pos = metadata.lpath.rfind('.');
+    if (pos != std::string::npos) {
+        ext = metadata.lpath.substr(pos + 1);
+    }
+    json_object_object_add(obj, "extension", json_object_new_string(ext.c_str()));
+    
+    return obj;
 }

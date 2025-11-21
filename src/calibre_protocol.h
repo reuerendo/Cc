@@ -29,6 +29,7 @@ private:
     BookManager* bookManager;
     bool connected;
     std::string errorMessage;
+	std::vector<BookMetadata> sessionBooks;
     
     // Device information
     std::string deviceUuid;
@@ -63,6 +64,7 @@ private:
     json_object* createDeviceInfo();
     std::string getPasswordHash(const std::string& password, 
                                const std::string& challenge);
+	json_object* cachedMetadataToJson(const BookMetadata& metadata, int index);
     
     // JSON helpers
     std::string jsonToString(json_object* obj);

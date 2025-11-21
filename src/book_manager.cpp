@@ -1,317 +1,382 @@
 #include "book_manager.h"
 #include "inkview.h"
-#include <sqlite3.h>
 #include <sys/stat.h>
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
+#include <algorithm>
 
-BookManager::BookManager() : db(nullptr) {
-    booksDir = "/mnt/ext1";
+// Макрос для логирования (можно заменить на ваш механизм)
+#define LOG_ERR(fmt, ...) fprintf(stderr, "[BookManager] Error: " fmt "\n", ##__VA_ARGS__)
+
+BookManager::BookManager() {
+    booksDir = "/mnt/ext1"; // Корневая папка для путей, так как DB хранит полные пути
 }
 
 BookManager::~BookManager() {
-    if (db) {
-        sqlite3_close((sqlite3*)db);
-    }
+    // БД открывается и закрывается по требованию, как в Lua скрипте
 }
 
 bool BookManager::initialize(const std::string& dbPath) {
-    // Create books directory
-    iv_buildpath(booksDir.c_str());
-    
-    // Open database
-    int rc = sqlite3_open(dbPath.c_str(), (sqlite3**)&db);
-    if (rc != SQLITE_OK) {
-        return false;
-    }
-    
-    return createTables();
-}
-
-bool BookManager::createTables() {
-    const char* sql = 
-        "CREATE TABLE IF NOT EXISTS books ("
-        "  uuid TEXT PRIMARY KEY,"
-        "  title TEXT NOT NULL,"
-        "  authors TEXT,"
-        "  lpath TEXT NOT NULL UNIQUE,"
-        "  series TEXT,"
-        "  series_index INTEGER,"
-        "  publisher TEXT,"
-        "  pubdate TEXT,"
-        "  last_modified TEXT,"
-        "  tags TEXT,"
-        "  comments TEXT,"
-        "  size INTEGER,"
-        "  thumbnail TEXT,"
-        "  thumbnail_height INTEGER,"
-        "  thumbnail_width INTEGER,"
-        "  is_read INTEGER DEFAULT 0,"
-        "  last_read_date TEXT,"
-        "  is_favorite INTEGER DEFAULT 0"
-        ");"
-        "CREATE INDEX IF NOT EXISTS idx_lpath ON books(lpath);"
-        "CREATE INDEX IF NOT EXISTS idx_title ON books(title);";
-    
-    char* errMsg = nullptr;
-    int rc = sqlite3_exec((sqlite3*)db, sql, nullptr, nullptr, &errMsg);
-    
-    if (rc != SQLITE_OK) {
-        if (errMsg) {
-            sqlite3_free(errMsg);
-        }
-        return false;
-    }
-    
-    return true;
-}
-
-bool BookManager::addBook(const BookMetadata& metadata) {
-    const char* sql = 
-        "INSERT OR REPLACE INTO books "
-        "(uuid, title, authors, lpath, series, series_index, publisher, "
-        "pubdate, last_modified, tags, comments, size, thumbnail, "
-        "thumbnail_height, thumbnail_width, is_read, last_read_date, is_favorite) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-    
-    sqlite3_stmt* stmt;
-    int rc = sqlite3_prepare_v2((sqlite3*)db, sql, -1, &stmt, nullptr);
-    if (rc != SQLITE_OK) {
-        return false;
-    }
-    
-    sqlite3_bind_text(stmt, 1, metadata.uuid.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 2, metadata.title.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 3, metadata.authors.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 4, metadata.lpath.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 5, metadata.series.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int(stmt, 6, metadata.seriesIndex);
-    sqlite3_bind_text(stmt, 7, metadata.publisher.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 8, metadata.pubdate.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 9, metadata.lastModified.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 10, metadata.tags.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 11, metadata.comments.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int64(stmt, 12, metadata.size);
-    sqlite3_bind_text(stmt, 13, metadata.thumbnail.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int(stmt, 14, metadata.thumbnailHeight);
-    sqlite3_bind_int(stmt, 15, metadata.thumbnailWidth);
-    sqlite3_bind_int(stmt, 16, metadata.isRead ? 1 : 0);
-    sqlite3_bind_text(stmt, 17, metadata.lastReadDate.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int(stmt, 18, metadata.isFavorite ? 1 : 0);
-    
-    rc = sqlite3_step(stmt);
-    sqlite3_finalize(stmt);
-    
-    return rc == SQLITE_DONE;
-}
-
-bool BookManager::updateBook(const BookMetadata& metadata) {
-    return addBook(metadata);  // INSERT OR REPLACE handles updates
-}
-
-bool BookManager::deleteBook(const std::string& uuid) {
-    // Get lpath first for file deletion
-    BookMetadata metadata;
-    if (getBook(uuid, metadata)) {
-        deleteBookFile(metadata.lpath);
-    }
-    
-    const char* sql = "DELETE FROM books WHERE uuid = ?";
-    sqlite3_stmt* stmt;
-    
-    int rc = sqlite3_prepare_v2((sqlite3*)db, sql, -1, &stmt, nullptr);
-    if (rc != SQLITE_OK) {
-        return false;
-    }
-    
-    sqlite3_bind_text(stmt, 1, uuid.c_str(), -1, SQLITE_TRANSIENT);
-    rc = sqlite3_step(stmt);
-    sqlite3_finalize(stmt);
-    
-    return rc == SQLITE_DONE;
-}
-
-bool BookManager::getBook(const std::string& uuid, BookMetadata& metadata) {
-    const char* sql = 
-        "SELECT uuid, title, authors, lpath, series, series_index, publisher, "
-        "pubdate, last_modified, tags, comments, size, thumbnail, "
-        "thumbnail_height, thumbnail_width, is_read, last_read_date, is_favorite "
-        "FROM books WHERE uuid = ?";
-    
-    sqlite3_stmt* stmt;
-    int rc = sqlite3_prepare_v2((sqlite3*)db, sql, -1, &stmt, nullptr);
-    if (rc != SQLITE_OK) {
-        return false;
-    }
-    
-    sqlite3_bind_text(stmt, 1, uuid.c_str(), -1, SQLITE_TRANSIENT);
-    
-    rc = sqlite3_step(stmt);
-    if (rc == SQLITE_ROW) {
-        metadata.uuid = (const char*)sqlite3_column_text(stmt, 0);
-        metadata.title = (const char*)sqlite3_column_text(stmt, 1);
-        metadata.authors = (const char*)sqlite3_column_text(stmt, 2);
-        metadata.lpath = (const char*)sqlite3_column_text(stmt, 3);
-        metadata.series = (const char*)sqlite3_column_text(stmt, 4);
-        metadata.seriesIndex = sqlite3_column_int(stmt, 5);
-        metadata.publisher = (const char*)sqlite3_column_text(stmt, 6);
-        metadata.pubdate = (const char*)sqlite3_column_text(stmt, 7);
-        metadata.lastModified = (const char*)sqlite3_column_text(stmt, 8);
-        metadata.tags = (const char*)sqlite3_column_text(stmt, 9);
-        metadata.comments = (const char*)sqlite3_column_text(stmt, 10);
-        metadata.size = sqlite3_column_int64(stmt, 11);
-        metadata.thumbnail = (const char*)sqlite3_column_text(stmt, 12);
-        metadata.thumbnailHeight = sqlite3_column_int(stmt, 13);
-        metadata.thumbnailWidth = sqlite3_column_int(stmt, 14);
-        metadata.isRead = sqlite3_column_int(stmt, 15) != 0;
-        metadata.lastReadDate = (const char*)sqlite3_column_text(stmt, 16);
-        metadata.isFavorite = sqlite3_column_int(stmt, 17) != 0;
-        
-        sqlite3_finalize(stmt);
+    // Проверяем доступность системной БД
+    FILE* f = fopen(SYSTEM_DB_PATH.c_str(), "r");
+    if (f) {
+        fclose(f);
         return true;
     }
-    
-    sqlite3_finalize(stmt);
     return false;
 }
 
-bool BookManager::bookExists(const std::string& uuid) {
-    const char* sql = "SELECT 1 FROM books WHERE uuid = ?";
-    sqlite3_stmt* stmt;
-    
-    int rc = sqlite3_prepare_v2((sqlite3*)db, sql, -1, &stmt, nullptr);
+sqlite3* BookManager::openDB() {
+    sqlite3* db;
+    int rc = sqlite3_open_v2(SYSTEM_DB_PATH.c_str(), &db, SQLITE_OPEN_READWRITE, NULL);
     if (rc != SQLITE_OK) {
+        LOG_ERR("Failed to open DB: %s", sqlite3_errmsg(db));
+        if (db) sqlite3_close(db);
+        return nullptr;
+    }
+    // Аналог: db:exec("PRAGMA busy_timeout = 5000;")
+    sqlite3_busy_timeout(db, 5000);
+    return db;
+}
+
+void BookManager::closeDB(sqlite3* db) {
+    if (db) sqlite3_close(db);
+}
+
+// Аналог get_storage_id из pb-db.lua
+int BookManager::getStorageId(const std::string& filename) {
+    if (filename.find("/mnt/ext1") == 0) {
+        return 1;
+    }
+    return 2;
+}
+
+// Аналог getFirstLetter
+std::string BookManager::getFirstLetter(const std::string& str) {
+    if (str.empty()) return "";
+    char first = toupper(str[0]);
+    if (isalnum(first)) {
+        return std::string(1, first);
+    }
+    if (str.length() > 1) {
+        return std::string(1, toupper(str[1]));
+    }
+    return "";
+}
+
+// Аналог getCurrentProfileId
+int BookManager::getCurrentProfileId(sqlite3* db) {
+    char* profileName = GetCurrentProfile(); // InkView API
+    if (!profileName) return 1; // Default profile
+
+    sqlite3_stmt* stmt;
+    const char* sql = "SELECT id FROM profiles WHERE name = ?";
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) return 1;
+
+    sqlite3_bind_text(stmt, 1, profileName, -1, SQLITE_STATIC);
+    
+    int id = 1;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        id = sqlite3_column_int(stmt, 0);
+    }
+    sqlite3_finalize(stmt);
+    if (profileName) free(profileName); // InkView обычно требует освобождения
+    return id;
+}
+
+// Получение или создание ID папки (логика из saveBookToDatabase для folders)
+int BookManager::getOrCreateFolder(sqlite3* db, const std::string& folderPath, int storageId) {
+    int folderId = -1;
+    
+    // INSERT INTO folders ... ON CONFLICT DO NOTHING
+    const char* insertSql = "INSERT INTO folders (storageid, name) VALUES (?, ?) "
+                            "ON CONFLICT(storageid, name) DO NOTHING";
+    
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(db, insertSql, -1, &stmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, storageId);
+        sqlite3_bind_text(stmt, 2, folderPath.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+
+    // SELECT id FROM folders ...
+    const char* selectSql = "SELECT id FROM folders WHERE storageid = ? AND name = ?";
+    if (sqlite3_prepare_v2(db, selectSql, -1, &stmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, storageId);
+        sqlite3_bind_text(stmt, 2, folderPath.c_str(), -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            folderId = sqlite3_column_int(stmt, 0);
+        }
+        sqlite3_finalize(stmt);
+    }
+    
+    return folderId;
+}
+
+// Реализация addBook / updateBook на основе saveBookToDatabase из pb-db.lua
+bool BookManager::addBook(const BookMetadata& metadata) {
+    // Получаем полный путь к файлу
+    std::string fullPath = getBookFilePath(metadata.lpath);
+    
+    // Получаем статистику файла (размер, время) - аналог lfs.attributes
+    struct stat st;
+    if (stat(fullPath.c_str(), &st) != 0) {
+        LOG_ERR("File not found on disk: %s", fullPath.c_str());
         return false;
     }
-    
-    sqlite3_bind_text(stmt, 1, uuid.c_str(), -1, SQLITE_TRANSIENT);
-    rc = sqlite3_step(stmt);
-    sqlite3_finalize(stmt);
-    
-    return rc == SQLITE_ROW;
-}
 
-std::vector<BookMetadata> BookManager::getAllBooks() {
-    std::vector<BookMetadata> books;
-    
-    const char* sql = 
-        "SELECT uuid, title, authors, lpath, series, series_index, publisher, "
-        "pubdate, last_modified, tags, comments, size, thumbnail, "
-        "thumbnail_height, thumbnail_width, is_read, last_read_date, is_favorite "
-        "FROM books ORDER BY title";
-    
-    sqlite3_stmt* stmt;
-    int rc = sqlite3_prepare_v2((sqlite3*)db, sql, -1, &stmt, nullptr);
-    if (rc != SQLITE_OK) {
-        return books;
+    sqlite3* db = openDB();
+    if (!db) return false;
+
+    // Разбор пути: папка и имя файла
+    std::string folderName, fileName;
+    size_t lastSlash = fullPath.find_last_of('/');
+    if (lastSlash == std::string::npos) {
+        folderName = "";
+        fileName = fullPath;
+    } else {
+        folderName = fullPath.substr(0, lastSlash);
+        fileName = fullPath.substr(lastSlash + 1);
     }
     
-    while (sqlite3_step(stmt) == SQLITE_ROW) {
-        BookMetadata metadata;
-        metadata.uuid = (const char*)sqlite3_column_text(stmt, 0);
-        metadata.title = (const char*)sqlite3_column_text(stmt, 1);
-        metadata.authors = (const char*)sqlite3_column_text(stmt, 2);
-        metadata.lpath = (const char*)sqlite3_column_text(stmt, 3);
-        metadata.series = (const char*)sqlite3_column_text(stmt, 4);
-        metadata.seriesIndex = sqlite3_column_int(stmt, 5);
-        metadata.publisher = (const char*)sqlite3_column_text(stmt, 6);
-        metadata.pubdate = (const char*)sqlite3_column_text(stmt, 7);
-        metadata.lastModified = (const char*)sqlite3_column_text(stmt, 8);
-        metadata.tags = (const char*)sqlite3_column_text(stmt, 9);
-        metadata.comments = (const char*)sqlite3_column_text(stmt, 10);
-        metadata.size = sqlite3_column_int64(stmt, 11);
-        metadata.thumbnail = (const char*)sqlite3_column_text(stmt, 12);
-        metadata.thumbnailHeight = sqlite3_column_int(stmt, 13);
-        metadata.thumbnailWidth = sqlite3_column_int(stmt, 14);
-        metadata.isRead = sqlite3_column_int(stmt, 15) != 0;
-        metadata.lastReadDate = (const char*)sqlite3_column_text(stmt, 16);
-        metadata.isFavorite = sqlite3_column_int(stmt, 17) != 0;
+    std::string fileExt = "";
+    size_t lastDot = fileName.find_last_of('.');
+    if (lastDot != std::string::npos) fileExt = fileName.substr(lastDot + 1);
+
+    int storageId = getStorageId(fullPath); // logic
+
+    sqlite3_exec(db, "BEGIN TRANSACTION", NULL, NULL, NULL);
+
+    int folderId = getOrCreateFolder(db, folderName, storageId);
+    if (folderId == -1) {
+        sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+        closeDB(db);
+        return false;
+    }
+
+    // Проверяем, существует ли файл
+    const char* checkFileSql = "SELECT id, book_id FROM files WHERE filename = ? AND folder_id = ?";
+    sqlite3_stmt* stmt;
+    int fileId = -1;
+    int bookId = -1;
+    
+    if (sqlite3_prepare_v2(db, checkFileSql, -1, &stmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_text(stmt, 1, fileName.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int(stmt, 2, folderId);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            fileId = sqlite3_column_int(stmt, 0);
+            bookId = sqlite3_column_int(stmt, 1);
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    time_t now = time(NULL);
+
+    if (fileId != -1) {
+        // --- UPDATE EXISTING BOOK ---
         
-        books.push_back(metadata);
-    }
-    
-    sqlite3_finalize(stmt);
-    return books;
-}
+        // Update files table
+        const char* updateFileSql = "UPDATE files SET size = ?, modification_time = ? WHERE id = ?";
+        if (sqlite3_prepare_v2(db, updateFileSql, -1, &stmt, nullptr) == SQLITE_OK) {
+            sqlite3_bind_int64(stmt, 1, (long long)st.st_size);
+            sqlite3_bind_int64(stmt, 2, (long long)st.st_mtime);
+            sqlite3_bind_int(stmt, 3, fileId);
+            sqlite3_step(stmt);
+            sqlite3_finalize(stmt);
+        }
 
-int BookManager::getBookCount() {
-    const char* sql = "SELECT COUNT(*) FROM books";
-    sqlite3_stmt* stmt;
-    
-    int rc = sqlite3_prepare_v2((sqlite3*)db, sql, -1, &stmt, nullptr);
-    if (rc != SQLITE_OK) {
-        return 0;
-    }
-    
-    int count = 0;
-    if (sqlite3_step(stmt) == SQLITE_ROW) {
-        count = sqlite3_column_int(stmt, 0);
-    }
-    
-    sqlite3_finalize(stmt);
-    return count;
-}
+        // Update books_impl table
+        const char* updateBookSql = 
+            "UPDATE books_impl SET title=?, first_title_letter=?, author=?, firstauthor=?, "
+            "first_author_letter=?, series=?, numinseries=?, size=?, isbn=?, sort_title=?, "
+            "updated=?, ts_added=? WHERE id=?";
+            
+        if (sqlite3_prepare_v2(db, updateBookSql, -1, &stmt, nullptr) == SQLITE_OK) {
+            sqlite3_bind_text(stmt, 1, metadata.title.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 2, getFirstLetter(metadata.title).c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 3, metadata.authors.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 4, metadata.authors.c_str(), -1, SQLITE_TRANSIENT); // Simplified
+            sqlite3_bind_text(stmt, 5, getFirstLetter(metadata.authors).c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 6, metadata.series.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int(stmt, 7, metadata.seriesIndex);
+            sqlite3_bind_int64(stmt, 8, metadata.size);
+            sqlite3_bind_text(stmt, 9, metadata.isbn.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 10, metadata.title.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int64(stmt, 11, now);
+            sqlite3_bind_int64(stmt, 12, now);
+            sqlite3_bind_int(stmt, 13, bookId);
+            
+            sqlite3_step(stmt);
+            sqlite3_finalize(stmt);
+        }
 
-bool BookManager::hasMetadataChanged(const BookMetadata& metadata) {
-    BookMetadata existing;
-    if (!getBook(metadata.uuid, existing)) {
-        return true;  // Book doesn't exist, metadata has "changed"
-    }
-    
-    // Compare last_modified dates
-    return metadata.lastModified != existing.lastModified;
-}
+    } else {
+        // --- INSERT NEW BOOK ---
+        
+        const char* insertBookSql = 
+            "INSERT INTO books_impl (title, first_title_letter, author, firstauthor, "
+            "first_author_letter, series, numinseries, size, isbn, sort_title, creationtime, "
+            "updated, ts_added, hidden) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+            
+        if (sqlite3_prepare_v2(db, insertBookSql, -1, &stmt, nullptr) == SQLITE_OK) {
+            sqlite3_bind_text(stmt, 1, metadata.title.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 2, getFirstLetter(metadata.title).c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 3, metadata.authors.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 4, metadata.authors.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 5, getFirstLetter(metadata.authors).c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 6, metadata.series.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int(stmt, 7, metadata.seriesIndex);
+            sqlite3_bind_int64(stmt, 8, metadata.size);
+            sqlite3_bind_text(stmt, 9, metadata.isbn.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 10, metadata.title.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int(stmt, 11, 0);
+            sqlite3_bind_int(stmt, 12, 0);
+            sqlite3_bind_int64(stmt, 13, now);
+            sqlite3_bind_int(stmt, 14, 0);
+            
+            if (sqlite3_step(stmt) == SQLITE_DONE) {
+                bookId = sqlite3_last_insert_rowid(db);
+            }
+            sqlite3_finalize(stmt);
+        }
 
-void BookManager::updateMetadataCache(const BookMetadata& metadata) {
-    updateBook(metadata);
-}
-
-std::string BookManager::sanitizeFileName(const std::string& name) {
-    std::string result;
-    for (char c : name) {
-        if (c == '/' || c == '\\' || c == ':' || c == '*' || 
-            c == '?' || c == '"' || c == '<' || c == '>' || c == '|') {
-            result += '_';
-        } else {
-            result += c;
+        if (bookId != -1) {
+            const char* insertFileSql = 
+                "INSERT INTO files (storageid, folder_id, book_id, filename, size, modification_time, ext) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)";
+                
+            if (sqlite3_prepare_v2(db, insertFileSql, -1, &stmt, nullptr) == SQLITE_OK) {
+                sqlite3_bind_int(stmt, 1, storageId);
+                sqlite3_bind_int(stmt, 2, folderId);
+                sqlite3_bind_int(stmt, 3, bookId);
+                sqlite3_bind_text(stmt, 4, fileName.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_int64(stmt, 5, (long long)st.st_size);
+                sqlite3_bind_int64(stmt, 6, (long long)st.st_mtime);
+                sqlite3_bind_text(stmt, 7, fileExt.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_step(stmt);
+                sqlite3_finalize(stmt);
+            }
         }
     }
-    return result;
+
+    // Update settings (Read status/Favorites)
+    if (bookId != -1) {
+        int profileId = getCurrentProfileId(db);
+        processBookSettings(db, bookId, metadata, profileId);
+    }
+
+    sqlite3_exec(db, "COMMIT", NULL, NULL, NULL);
+    sqlite3_exec(db, "PRAGMA wal_checkpoint(FULL)", NULL, NULL, NULL);
+    
+    closeDB(db);
+    return true;
+}
+
+// Реализация processBookSettings из pb-db.lua
+bool BookManager::processBookSettings(sqlite3* db, int bookId, const BookMetadata& metadata, int profileId) {
+    if (!metadata.isRead && !metadata.isFavorite) return true;
+
+    int completed = metadata.isRead ? 1 : 0;
+    int favorite = metadata.isFavorite ? 1 : 0;
+    int cpage = metadata.isRead ? 100 : 0; // Заглушка, как в Lua
+    
+    // Парсинг времени прочтения из ISO строки, если нужно, опустим для краткости, 
+    // используем текущее или 0
+    time_t completedTs = metadata.isRead ? time(NULL) : 0;
+
+    // Check if settings exist
+    sqlite3_stmt* stmt;
+    const char* checkSql = "SELECT bookid FROM books_settings WHERE bookid = ? AND profileid = ?";
+    bool exists = false;
+    
+    if (sqlite3_prepare_v2(db, checkSql, -1, &stmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, bookId);
+        sqlite3_bind_int(stmt, 2, profileId);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            exists = true;
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    if (exists) {
+        const char* updateSql = "UPDATE books_settings SET completed=?, favorite=?, completed_ts=?, cpage=? WHERE bookid=? AND profileid=?";
+        if (sqlite3_prepare_v2(db, updateSql, -1, &stmt, nullptr) == SQLITE_OK) {
+            sqlite3_bind_int(stmt, 1, completed);
+            sqlite3_bind_int(stmt, 2, favorite);
+            sqlite3_bind_int64(stmt, 3, completedTs);
+            sqlite3_bind_int(stmt, 4, cpage);
+            sqlite3_bind_int(stmt, 5, bookId);
+            sqlite3_bind_int(stmt, 6, profileId);
+            sqlite3_step(stmt);
+            sqlite3_finalize(stmt);
+        }
+    } else {
+        const char* insertSql = "INSERT INTO books_settings (bookid, profileid, completed, favorite, completed_ts, cpage) VALUES (?, ?, ?, ?, ?, ?)";
+        if (sqlite3_prepare_v2(db, insertSql, -1, &stmt, nullptr) == SQLITE_OK) {
+            sqlite3_bind_int(stmt, 1, bookId);
+            sqlite3_bind_int(stmt, 2, profileId);
+            sqlite3_bind_int(stmt, 3, completed);
+            sqlite3_bind_int(stmt, 4, favorite);
+            sqlite3_bind_int64(stmt, 5, completedTs);
+            sqlite3_bind_int(stmt, 6, cpage);
+            sqlite3_step(stmt);
+            sqlite3_finalize(stmt);
+        }
+    }
+    return true;
+}
+
+bool BookManager::updateBook(const BookMetadata& metadata) {
+    return addBook(metadata); // Логика Insert/Update уже внутри addBook
 }
 
 std::string BookManager::getBookFilePath(const std::string& lpath) {
-    return booksDir + "/" + lpath;
+    // booksDir уже содержит /mnt/ext1 (без папки Calibre, если вы ее убрали)
+    if (booksDir.back() == '/' && lpath.front() == '/') {
+        return booksDir + lpath.substr(1);
+    } else if (booksDir.back() != '/' && lpath.front() != '/') {
+        return booksDir + "/" + lpath;
+    }
+    return booksDir + lpath;
 }
 
-bool BookManager::saveBookFile(const std::string& lpath, const void* data, size_t length) {
-    std::string filePath = getBookFilePath(lpath);
-    
-    // Create subdirectories if needed
-    size_t pos = filePath.rfind('/');
-    if (pos != std::string::npos) {
-        std::string dir = filePath.substr(0, pos);
-        iv_buildpath(dir.c_str());
-    }
-    
-    FILE* file = iv_fopen(filePath.c_str(), "wb");
-    if (!file) {
-        return false;
-    }
-    
-    size_t written = fwrite(data, 1, length, file);
-    iv_fclose(file);
-    
-    return written == length;
+// Остальные методы (getAllBooks, getBookCount и т.д.) 
+// нужно адаптировать для чтения из explorer-3.db по аналогии,
+// но для приема книг они менее критичны.
+// Для корректной работы кэша их нужно реализовать через SELECT из books_impl.
+
+std::vector<BookMetadata> BookManager::getAllBooks() {
+    // TODO: Реализовать SELECT uuid, title... FROM books_impl JOIN files ...
+    // для заполнения кэша при подключении.
+    // Для простоты пока можно возвращать пустой вектор, тогда Calibre 
+    // будет думать, что книг нет, и пытаться их отправить (или обновить, если UUID совпадет).
+    return std::vector<BookMetadata>();
 }
 
-bool BookManager::deleteBookFile(const std::string& lpath) {
-    std::string filePath = getBookFilePath(lpath);
-    return unlink(filePath.c_str()) == 0;
+int BookManager::getBookCount() {
+    // Аналогично getAllBooks
+    return 0;
+}
+
+bool BookManager::hasMetadataChanged(const BookMetadata& metadata) {
+    // Всегда true, чтобы обновить данные в системной БД
+    return true; 
+}
+
+void BookManager::updateMetadataCache(const BookMetadata& metadata) {
+    // Пусто, так как мы пишем сразу в системную БД
 }
 
 void BookManager::updateCollections(const std::map<std::string, std::vector<std::string>>& collections) {
-    // TODO: Implement collection support
-    // For now, collections can be stored as tags
+    // Реализация syncCollectionsIncremental из pb-db.lua потребует работы с таблицами
+    // bookshelfs и bookshelfs_books.
+    // Это объемная задача, лучше убедиться, что базовая передача работает.
+}
 
+bool BookManager::deleteBook(const std::string& lpath) {
+    // TODO: Реализовать удаление из files и books_impl
+    return true;
 }
