@@ -474,19 +474,49 @@ bool CalibreProtocol::handleGetBookCount(json_object* args) {
     return true;
 }
 
+// Вспомогательная функция (можно добавить перед handleSendBooklists или внутри как лямбду)
+static std::string cleanCollectionName(const std::string& rawName) {
+    // Логика аналогична Lua: collection_name:match("^(.-)%s*%(.*%)$")
+    // Ищем последнее вхождение " (" перед закрывающей скобкой в конце
+    
+    if (rawName.empty() || rawName.back() != ')') {
+        return rawName;
+    }
+
+    // Ищем последнюю открывающую скобку
+    size_t lastOpen = rawName.rfind('(');
+    
+    // Проверяем, что скобка найдена, она не в начале, и перед ней есть пробел
+    if (lastOpen != std::string::npos && lastOpen > 0 && rawName[lastOpen - 1] == ' ') {
+        // Возвращаем подстроку до пробела перед скобкой
+        // lastOpen - 1 удалит пробел перед скобкой
+        return rawName.substr(0, lastOpen - 1);
+    }
+    
+    return rawName;
+}
+
 bool CalibreProtocol::handleSendBooklists(json_object* args) {
     json_object* collectionsObj = NULL;
     if (json_object_object_get_ex(args, "collections", &collectionsObj)) {
         std::map<std::string, std::vector<std::string>> collections;
+        
+        // Итерация по объекту коллекций
         json_object_object_foreach(collectionsObj, key, val) {
+            // ОЧИСТКА ИМЕНИ: "Series (series)" -> "Series"
+            std::string cleanName = cleanCollectionName(key);
+            
             std::vector<std::string> lpaths;
             int arrayLen = json_object_array_length(val);
             for (int i = 0; i < arrayLen; i++) {
                 json_object* lpathObj = json_object_array_get_idx(val, i);
                 lpaths.push_back(json_object_get_string(lpathObj));
             }
-            collections[key] = lpaths;
+            
+            // Используем очищенное имя как ключ
+            collections[cleanName] = lpaths;
         }
+        
         bookManager->updateCollections(collections);
     }
     return true;
