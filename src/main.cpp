@@ -1,6 +1,7 @@
 #include "inkview.h"
 #include "network.h"
 #include "calibre_protocol.h"
+#include "book_manager.h"  // <-- Добавлено: необходимо подключить заголовок
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -75,6 +76,7 @@ static const char *DEFAULT_FAVORITE_COLUMN = "#favorite";
 
 // Connection state
 static NetworkManager* networkManager = NULL;
+static BookManager* bookManager = NULL; // <-- Добавлено: глобальная переменная
 static CalibreProtocol* protocol = NULL;
 static pthread_t connectionThread;
 static bool isConnecting = false;
@@ -295,10 +297,10 @@ void* connectionThreadFunc(void* arg) {
 }
 
 void startConnection() {
-    DEBUG_LOG("startConnection called, isConnecting=%d", isConnecting);
+    logMsg("startConnection called, isConnecting=%d", isConnecting);
     
     if (isConnecting) {
-        DEBUG_LOG("Already connecting");
+        logMsg("Already connecting");
         return;
     }
     
@@ -324,24 +326,34 @@ void startConnection() {
     isConnecting = true;
     
     if (!networkManager) {
-        DEBUG_LOG("Creating NetworkManager");
+        logMsg("Creating NetworkManager");
         networkManager = new NetworkManager();
+    }
+
+    if (!bookManager) {
+        logMsg("Creating BookManager");
+        bookManager = new BookManager();
+        // Путь к базе данных книг
+        std::string dbPath = "/mnt/ext1/system/config/calibre_books.db";
+        if (!bookManager->initialize(dbPath)) {
+             logMsg("Failed to initialize database");
+        }
     }
     
     if (!protocol) {
-        DEBUG_LOG("Creating CalibreProtocol");
-        protocol = new CalibreProtocol(networkManager);
+        logMsg("Creating CalibreProtocol");
+        protocol = new CalibreProtocol(networkManager, bookManager);
     }
     
     // Start connection in thread using pthread
-    DEBUG_LOG("Creating connection thread");
+    logMsg("Creating connection thread");
     if (pthread_create(&connectionThread, NULL, connectionThreadFunc, NULL) != 0) {
-        DEBUG_LOG("Failed to create connection thread");
+        logMsg("Failed to create connection thread");
         updateConnectionStatus("Failed to start");
         isConnecting = false;
         return;
     }
-    DEBUG_LOG("Connection thread started");
+    logMsg("Connection thread started");
 }
 
 void stopConnection() {
@@ -474,9 +486,16 @@ int main(int argc, char *argv[]) {
     // Cleanup
     if (protocol) {
         delete protocol;
+        protocol = NULL;
     }
     if (networkManager) {
         delete networkManager;
+        networkManager = NULL;
+    }
+    // <-- ИСПРАВЛЕНИЕ: Очистка памяти bookManager
+    if (bookManager) {
+        delete bookManager;
+        bookManager = NULL;
     }
     
     return 0;
