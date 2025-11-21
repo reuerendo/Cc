@@ -334,7 +334,7 @@ void NetworkManager::disconnect() {
 }
 
 bool NetworkManager::sendAll(const void* data, size_t length) {
-    logNetMsg("Sending %zu bytes", length);
+    // logNetMsg("Sending %zu bytes", length);
     
     const char* ptr = (const char*)data;
     size_t remaining = length;
@@ -360,7 +360,7 @@ bool NetworkManager::sendAll(const void* data, size_t length) {
 }
 
 bool NetworkManager::receiveAll(void* buffer, size_t length) {
-    logNetMsg("Receiving %zu bytes", length);
+    // logNetMsg("Receiving %zu bytes", length);
     
     char* ptr = (char*)buffer;
     size_t remaining = length;
