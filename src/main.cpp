@@ -227,7 +227,31 @@ void* connectionThreadFunc(void* arg) {
     
     const char* ip = ReadString(appConfig, KEY_IP, DEFAULT_IP);
     int port = ReadInt(appConfig, KEY_PORT, atoi(DEFAULT_PORT));
-    const char* password = ReadString(appConfig, KEY_PASSWORD, DEFAULT_PASSWORD);
+    
+    // Read password using ReadSecret to get the decrypted value
+    const char* encryptedPassword = ReadString(appConfig, KEY_PASSWORD, DEFAULT_PASSWORD);
+    std::string password;
+    
+    if (encryptedPassword && strlen(encryptedPassword) > 0) {
+        // If password starts with '$', it's encrypted - use ReadSecret to decrypt
+        if (encryptedPassword[0] == '$') {
+            const char* decrypted = ReadSecret(appConfig, KEY_PASSWORD, "");
+            if (decrypted && strlen(decrypted) > 0) {
+                password = decrypted;
+                logMsg("Using decrypted password (length: %d)", (int)password.length());
+            } else {
+                password = "";
+                logMsg("Password decryption returned empty string");
+            }
+        } else {
+            // Password is not encrypted yet, use as-is
+            password = encryptedPassword;
+            logMsg("Using plaintext password (length: %d)", (int)password.length());
+        }
+    } else {
+        password = "";
+        logMsg("No password configured");
+    }
     
     logMsg("Connecting to %s:%d", ip, port);
     
