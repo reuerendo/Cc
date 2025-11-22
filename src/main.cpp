@@ -1,5 +1,4 @@
-void performExit();
-void delayedConnectionStart();#include "inkview.h"
+#include "inkview.h"
 #include "network.h"
 #include "calibre_protocol.h"
 #include "book_manager.h"
@@ -89,6 +88,9 @@ static bool shouldStop = false;
 static volatile bool exitRequested = false;
 
 int mainEventHandler(int type, int par1, int par2);
+void performExit();
+void delayedConnectionStart();
+void startCalibreConnection();
 
 static iconfigedit configItems[] = {
     {
@@ -334,7 +336,6 @@ void startCalibreConnection() {
 void delayedConnectionStart() {
     logMsg("Delayed connection start");
     
-    // Check current WiFi state
     NET_STATE currentState = GetNetState();
     logMsg("Current NET_STATE: %d (DISCONNECTED=%d, CONNECTING=%d, CONNECTED=%d)", 
            currentState, DISCONNECTED, CONNECTING, CONNECTED);
@@ -347,7 +348,6 @@ void delayedConnectionStart() {
         return;
     }
     
-    // Enable WiFi if disabled
     logMsg("Enabling WiFi module");
     updateConnectionStatus("Enabling WiFi...");
     SendEvent(mainEventHandler, EVT_USER_UPDATE, 0, 0);
@@ -359,11 +359,10 @@ void delayedConnectionStart() {
         return;
     }
     
-    // Wait for WiFi module initialization
     logMsg("Waiting for WiFi module initialization");
     int attempts = 0;
     while (attempts < 10) {
-        usleep(500000); // 0.5 seconds
+        usleep(500000);
         NET_STATE state = GetNetState();
         logMsg("Init wait attempt %d, state: %d", attempts, state);
         if (state != DISCONNECTED) break;
@@ -377,7 +376,6 @@ void delayedConnectionStart() {
         return;
     }
     
-    // Try to connect to WiFi
     logMsg("Attempting WiFi connection");
     updateConnectionStatus("Connecting to WiFi...");
     SendEvent(mainEventHandler, EVT_USER_UPDATE, 0, 0);
@@ -386,14 +384,13 @@ void delayedConnectionStart() {
     logMsg("NetConnect result: %d (NET_OK=%d)", connectResult, NET_OK);
     
     if (connectResult == NET_OK || connectResult == NET_CONNECT) {
-        // Wait for connection to establish
         logMsg("Waiting for WiFi connection");
         attempts = 0;
-        while (attempts < 20) { // maximum 10 seconds
-            usleep(500000); // 0.5 seconds
+        while (attempts < 20) {
+            usleep(500000);
             NET_STATE state = GetNetState();
             
-            if (attempts % 4 == 0) { // Update status every 2 seconds
+            if (attempts % 4 == 0) {
                 char statusBuf[64];
                 snprintf(statusBuf, sizeof(statusBuf), "Connecting to WiFi... %ds", attempts / 2);
                 updateConnectionStatus(statusBuf);
