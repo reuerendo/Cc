@@ -108,6 +108,7 @@ static iconfigedit configItems[] = {
         (char*)KEY_CONNECTION,
         (char*)"Disconnected",  // Will be updated dynamically
         NULL,
+        NULL,
         NULL
     },
     {
@@ -117,6 +118,7 @@ static iconfigedit configItems[] = {
         NULL,
         (char *)KEY_IP,
         (char *)DEFAULT_IP,
+        NULL,
         NULL,
         NULL
     },
@@ -128,6 +130,7 @@ static iconfigedit configItems[] = {
         (char *)KEY_PORT,
         (char *)DEFAULT_PORT,
         NULL,
+        NULL,
         NULL
     },
     {
@@ -137,6 +140,7 @@ static iconfigedit configItems[] = {
         NULL,
         (char *)KEY_PASSWORD,
         (char *)DEFAULT_PASSWORD,
+        NULL,
         NULL,
         NULL
     },
@@ -148,6 +152,7 @@ static iconfigedit configItems[] = {
         (char *)KEY_READ_COLUMN,
         (char *)DEFAULT_READ_COLUMN,
         NULL,
+        NULL,
         NULL
     },
     {
@@ -157,6 +162,7 @@ static iconfigedit configItems[] = {
         NULL,
         (char *)KEY_READ_DATE_COLUMN,
         (char *)DEFAULT_READ_DATE_COLUMN,
+        NULL,
         NULL,
         NULL
     },
@@ -168,10 +174,12 @@ static iconfigedit configItems[] = {
         (char *)KEY_FAVORITE_COLUMN,
         (char *)DEFAULT_FAVORITE_COLUMN,
         NULL,
+        NULL,
         NULL
     },
     {
         0,
+        NULL,
         NULL,
         NULL,
         NULL,
