@@ -82,10 +82,20 @@ CalibreProtocol::CalibreProtocol(NetworkManager* net, BookManager* bookMgr,
                                  const std::string& favCol) 
     : network(net), bookManager(bookMgr), connected(false),
       readColumn(readCol), readDateColumn(readDateCol), favoriteColumn(favCol),
-      currentBookLength(0), currentBookReceived(0), currentBookFile(nullptr) {
+      currentBookLength(0), currentBookReceived(0), currentBookFile(nullptr),
+      booksReceivedInSession(0) {
     
-    deviceName = "PocketBook InkPad 4";
+    // Get actual device model name from SDK
+    const char* model = GetDeviceModel();
+    if (model && strlen(model) > 0) {
+        deviceName = std::string("PocketBook ") + model;
+    } else {
+        deviceName = "PocketBook Device";
+    }
+    
     appVersion = "1.0.0";
+    
+    logProto("Device name: %s", deviceName.c_str());
 }
 
 CalibreProtocol::~CalibreProtocol() {

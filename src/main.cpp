@@ -9,8 +9,10 @@
 #include <pthread.h>
 #include <unistd.h>
 
-// Custom event for safe UI updates from thread
+// Custom events for safe UI updates from thread
 #define EVT_USER_UPDATE 20001
+#define EVT_CONNECTION_FAILED 20002
+#define EVT_SYNC_COMPLETE 20003
 
 // Debug logging
 static FILE* logFile = NULL;
@@ -67,8 +69,11 @@ static const char *KEY_READ_DATE_COLUMN = "read_date_column";
 static const char *KEY_FAVORITE_COLUMN = "favorite_column";
 static const char *KEY_CONNECTION = "connection_enabled";
 
-// Global connection status buffer
+// Global connection status buffer and error message
 static char connectionStatusBuffer[128] = "Disconnected"; 
+static char connectionErrorBuffer[256] = "";
+static char syncCompleteBuffer[256] = "";
+static int booksReceivedCount = 0;
 
 // Default values
 static const char *DEFAULT_IP = "192.168.1.100";
@@ -90,6 +95,7 @@ static volatile bool exitRequested = false;
 // Forward declarations
 int mainEventHandler(int type, int par1, int par2);
 void performExit();
+void startConnection();
 
 // Config editor structure
 static iconfigedit configItems[] = {
@@ -179,32 +185,66 @@ static iconfigedit configItems[] = {
 void updateConnectionStatus(const char* status) {
     logMsg("Status update: %s", status);
     snprintf(connectionStatusBuffer, sizeof(connectionStatusBuffer), "%s", status);
+    
+    // Update config value to trigger redraw
+    if (appConfig) {
+        WriteString(appConfig, KEY_CONNECTION, status);
+    }
+    
     SendEvent(mainEventHandler, EVT_USER_UPDATE, 0, 0);
 }
 
-bool ensureWiFiEnabled() {
+void notifyConnectionFailed(const char* errorMsg) {
+    logMsg("Connection failed: %s", errorMsg);
+    snprintf(connectionErrorBuffer, sizeof(connectionErrorBuffer), "%s", errorMsg);
+    SendEvent(mainEventHandler, EVT_CONNECTION_FAILED, 0, 0);
+}
+
+void notifySyncComplete(int booksReceived) {
+    logMsg("Sync complete: %d books received", booksReceived);
+    booksReceivedCount = booksReceived;
+    snprintf(syncCompleteBuffer, sizeof(syncCompleteBuffer), 
+             "Synchronization complete!\n%d book%s received from Calibre.", 
+             booksReceived, booksReceived == 1 ? "" : "s");
+    SendEvent(mainEventHandler, EVT_SYNC_COMPLETE, 0, 0);
+}
+
+// Check if WiFi is ready and connected
+bool isWiFiReady() {
+    int netStatus = QueryNetwork();
+    return (netStatus & NET_WIFIREADY) && (netStatus & NET_CONNECTED);
+}
+
+// Enable WiFi if not already enabled
+bool enableWiFi() {
     logMsg("Checking WiFi status");
     int netStatus = QueryNetwork();
+    
     if (netStatus & NET_WIFIREADY) {
         if (netStatus & NET_CONNECTED) {
+            logMsg("WiFi already connected");
             return true;
         }
+        logMsg("WiFi enabled but not connected");
         return false;
     }
+    
     logMsg("WiFi is not enabled, attempting to enable");
     int result = WiFiPower(NET_WIFI);
     if (result != NET_OK) {
         logMsg("Failed to enable WiFi: %d", result);
         return false;
     }
-    return false;
+    
+    logMsg("WiFi power on initiated");
+    return false; // Not connected yet, but enabling
 }
 
 void* connectionThreadFunc(void* arg) {
     logMsg("Connection thread started");
     isConnecting = true;
     
-    updateConnectionStatus("Disconnected");
+    updateConnectionStatus("Connecting...");
     
     const char* ip = ReadString(appConfig, KEY_IP, DEFAULT_IP);
     int port = ReadInt(appConfig, KEY_PORT, atoi(DEFAULT_PORT));
@@ -228,13 +268,15 @@ void* connectionThreadFunc(void* arg) {
     if (shouldStop) {
         logMsg("Connection cancelled before connect");
         isConnecting = false;
+        updateConnectionStatus("Disconnected");
         return NULL;
     }
     
     if (!networkManager->connectToServer(ip, port)) {
         logMsg("Connection failed");
-        updateConnectionStatus("Disconnected");
         isConnecting = false;
+        updateConnectionStatus("Disconnected");
+        notifyConnectionFailed("Failed to connect to Calibre server.\nPlease check IP address and port.");
         return NULL;
     }
     
@@ -242,16 +284,22 @@ void* connectionThreadFunc(void* arg) {
         logMsg("Connection cancelled after connect");
         networkManager->disconnect();
         isConnecting = false;
+        updateConnectionStatus("Disconnected");
         return NULL;
     }
     
     logMsg("Connected, starting handshake");
+    updateConnectionStatus("Handshake...");
     
     if (!protocol->performHandshake(password)) {
         logMsg("Handshake failed: %s", protocol->getErrorMessage().c_str());
-        updateConnectionStatus("Disconnected");
         networkManager->disconnect();
         isConnecting = false;
+        updateConnectionStatus("Disconnected");
+        
+        std::string errorMsg = "Handshake failed: ";
+        errorMsg += protocol->getErrorMessage();
+        notifyConnectionFailed(errorMsg.c_str());
         return NULL;
     }
     
@@ -263,11 +311,20 @@ void* connectionThreadFunc(void* arg) {
     });
     
     logMsg("Disconnecting");
+    
+    // Get books received count before disconnecting
+    int booksReceived = protocol->getBooksReceivedCount();
+    
     protocol->disconnect();
     networkManager->disconnect();
     
     updateConnectionStatus("Disconnected");
     isConnecting = false;
+    
+    // Notify about sync completion if any books were received
+    if (booksReceived > 0) {
+        notifySyncComplete(booksReceived);
+    }
     
     return NULL;
 }
@@ -275,13 +332,29 @@ void* connectionThreadFunc(void* arg) {
 void startConnection() {
     if (isConnecting) return;
     
-    if (!ensureWiFiEnabled()) {
-        int netStatus = QueryNetwork();
-        if (!(netStatus & NET_CONNECTED)) {
-            Message(ICON_WARNING, "Network Error", 
-                    "WiFi is not connected. Please connect to a WiFi network first.", 3000);
+    logMsg("startConnection called");
+    
+    // Check WiFi status first
+    if (!isWiFiReady()) {
+        logMsg("WiFi not ready, attempting to enable");
+        ShowHourglass();
+        updateConnectionStatus("Enabling WiFi...");
+        
+        // Try to enable WiFi
+        enableWiFi();
+        
+        // Give it a moment and check again
+        sleep(1);
+        
+        if (!isWiFiReady()) {
+            HideHourglass();
+            updateConnectionStatus("Disconnected (WiFi not ready)");
+            logMsg("WiFi still not ready after enable attempt");
             return;
         }
+        
+        HideHourglass();
+        logMsg("WiFi is now ready");
     }
     
     isConnecting = true;
@@ -371,6 +444,17 @@ void configItemChangedHandler(char *name) {
     if (appConfig) SaveConfig(appConfig);
 }
 
+void retryConnectionHandler(int button) {
+    logMsg("Retry dialog closed with button: %d", button);
+    
+    if (button == 1) { // "Retry" button
+        logMsg("User chose to retry connection");
+        startConnection();
+    } else { // "Cancel" button
+        logMsg("User cancelled retry");
+    }
+}
+
 void configCloseHandler() {
     logMsg("Config editor closed by user");
     performExit();
@@ -438,7 +522,17 @@ int mainEventHandler(int type, int par1, int par2) {
             break;
             
         case EVT_USER_UPDATE:
-            SoftUpdate();
+            // Force full update of config editor to show new status
+            PartialUpdate(0, 0, ScreenWidth(), ScreenHeight());
+            break;
+            
+        case EVT_CONNECTION_FAILED:
+            logMsg("Showing connection failed dialog");
+            Dialog(ICON_ERROR, 
+                   "Connection Failed", 
+                   connectionErrorBuffer,
+                   "Retry", "Cancel", 
+                   retryConnectionHandler);
             break;
             
         case EVT_SHOW:
