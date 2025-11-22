@@ -19,6 +19,53 @@
 // Debug logging
 static FILE* logFile = NULL;
 
+// Global config
+static iconfig *appConfig = NULL;
+static const char *CONFIG_FILE = "/mnt/ext1/system/config/calibre-connect.cfg";
+
+// Config keys
+static const char *KEY_IP = "ip";
+static const char *KEY_PORT = "port";
+static const char *KEY_PASSWORD = "password";
+static const char *KEY_READ_COLUMN = "read_column";
+static const char *KEY_READ_DATE_COLUMN = "read_date_column";
+static const char *KEY_FAVORITE_COLUMN = "favorite_column";
+static const char *KEY_CONNECTION = "connection_enabled";
+
+// Global connection status buffer and error message
+static char connectionStatusBuffer[128] = "Disconnected"; 
+static char connectionErrorBuffer[256] = "";
+static char syncCompleteBuffer[256] = "";
+static int booksReceivedCount = 0;
+
+// Default values
+static const char *DEFAULT_IP = "192.168.1.100";
+static const char *DEFAULT_PORT = "9090";
+static const char *DEFAULT_PASSWORD = "";
+static const char *DEFAULT_READ_COLUMN = "#read";
+static const char *DEFAULT_READ_DATE_COLUMN = "#read_date";
+static const char *DEFAULT_FAVORITE_COLUMN = "#favorite";
+
+// Connection state
+static NetworkManager* networkManager = NULL;
+static BookManager* bookManager = NULL;
+static CalibreProtocol* protocol = NULL;
+static pthread_t connectionThread;
+static pthread_t wifiThread;
+static bool isConnecting = false;
+static bool shouldStop = false;
+static volatile bool exitRequested = false;
+static volatile bool wifiEnabling = false;
+static int wifiRetryCount = 0;
+
+// Forward declarations - must be before any function that uses them
+int mainEventHandler(int type, int par1, int par2);
+void performExit();
+void startConnection();
+void startConnectionAfterWifi();
+void startWifiEnable();
+
+// Logging functions
 void initLog() {
     const char* logPath = "/mnt/ext1/system/calibre-connect.log";
     logFile = iv_fopen(logPath, "a");
@@ -58,141 +105,67 @@ void closeLog() {
     }
 }
 
-// Global config
-static iconfig *appConfig = NULL;
-static const char *CONFIG_FILE = "/mnt/ext1/system/config/calibre-connect.cfg";
-
-// Config keys
-static const char *KEY_IP = "ip";
-static const char *KEY_PORT = "port";
-static const char *KEY_PASSWORD = "password";
-static const char *KEY_READ_COLUMN = "read_column";
-static const char *KEY_READ_DATE_COLUMN = "read_date_column";
-static const char *KEY_FAVORITE_COLUMN = "favorite_column";
-static const char *KEY_CONNECTION = "connection_enabled";
-
-// Global connection status buffer and error message
-static char connectionStatusBuffer[128] = "Disconnected"; 
-static char connectionErrorBuffer[256] = "";
-static char syncCompleteBuffer[256] = "";
-static int booksReceivedCount = 0;
-
-// Default values
-static const char *DEFAULT_IP = "192.168.1.100";
-static const char *DEFAULT_PORT = "9090";
-static const char *DEFAULT_PASSWORD = "";
-static const char *DEFAULT_READ_COLUMN = "#read";
-static const char *DEFAULT_READ_DATE_COLUMN = "#read_date";
-static const char *DEFAULT_FAVORITE_COLUMN = "#favorite";
-
-// Connection state
-static NetworkManager* networkManager = NULL;
-static BookManager* bookManager = NULL;
-static CalibreProtocol* protocol = NULL;
-static pthread_t connectionThread;
-static pthread_t wifiThread;
-static bool isConnecting = false;
-static bool shouldStop = false;
-static volatile bool exitRequested = false;
-static volatile bool wifiEnabling = false;
-
-// WiFi retry counter
-static int wifiRetryCount = 0;
-
 // Timer callback for WiFi retry
 void wifiRetryTimerProc() {
     logMsg("WiFi retry timer fired");
     startConnection();
 }
-void performExit();
-void startConnection();
-void startConnectionAfterWifi();
 
 // Config editor structure
 static iconfigedit configItems[] = {
     {
-        CFG_INFO,
-        NULL,
-        (char*)"Connection",
-        NULL,
+        CFG_INFO, NULL,
+        (char*)"Connection", NULL,
         (char*)KEY_CONNECTION,
         connectionStatusBuffer, 
-        NULL,
-        NULL,
-        NULL
+        NULL, NULL, NULL
     },
     {
-        CFG_IPADDR,
-        NULL,
-        (char *)"IP Address",
-        NULL,
+        CFG_IPADDR, NULL,
+        (char *)"IP Address", NULL,
         (char *)KEY_IP,
         (char *)DEFAULT_IP,
-        NULL,
-        NULL
+        NULL, NULL
     },
     {
-        CFG_NUMBER,
-        NULL,
-        (char *)"Port",
-        NULL,
+        CFG_NUMBER, NULL,
+        (char *)"Port", NULL,
         (char *)KEY_PORT,
         (char *)DEFAULT_PORT,
-        NULL,
-        NULL
+        NULL, NULL
     },
     {
-        CFG_PASSWORD,
-        NULL,
-        (char *)"Password",
-        NULL,
+        CFG_PASSWORD, NULL,
+        (char *)"Password", NULL,
         (char *)KEY_PASSWORD,
         (char *)DEFAULT_PASSWORD,
-        NULL,
-        NULL
+        NULL, NULL
     },
     {
-        CFG_TEXT,
-        NULL,
-        (char *)"Read Status Column",
-        NULL,
+        CFG_TEXT, NULL,
+        (char *)"Read Status Column", NULL,
         (char *)KEY_READ_COLUMN,
         (char *)DEFAULT_READ_COLUMN,
-        NULL,
-        NULL
+        NULL, NULL
     },
     {
-        CFG_TEXT,
-        NULL,
-        (char *)"Read Date Column",
-        NULL,
+        CFG_TEXT, NULL,
+        (char *)"Read Date Column", NULL,
         (char *)KEY_READ_DATE_COLUMN,
         (char *)DEFAULT_READ_DATE_COLUMN,
-        NULL,
-        NULL
+        NULL, NULL
     },
     {
-        CFG_TEXT,
-        NULL,
-        (char *)"Favorite Column",
-        NULL,
+        CFG_TEXT, NULL,
+        (char *)"Favorite Column", NULL,
         (char *)KEY_FAVORITE_COLUMN,
         (char *)DEFAULT_FAVORITE_COLUMN,
-        NULL,
-        NULL
+        NULL, NULL
     },
-    {
-        0,
-        NULL,
-        NULL,
-        NULL,
-        NULL,
-        NULL,
-        NULL,
-        NULL
-    }
+    { 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL }
 };
 
+// Status update functions
 void updateConnectionStatus(const char* status) {
     logMsg("Status update: %s", status);
     snprintf(connectionStatusBuffer, sizeof(connectionStatusBuffer), "%s", status);
@@ -219,14 +192,13 @@ void notifySyncComplete(int booksReceived) {
     SendEvent(mainEventHandler, EVT_SYNC_COMPLETE, 0, 0);
 }
 
-// Check if WiFi is connected using GetNetState
+// WiFi status check functions
 bool isWiFiConnected() {
     NET_STATE state = GetNetState();
     logMsg("GetNetState() = %d (CONNECTED=%d)", state, CONNECTED);
     return state == CONNECTED;
 }
 
-// Check if WiFi hardware is ready
 bool isWiFiHardwareReady() {
     int netStatus = QueryNetwork();
     logMsg("QueryNetwork() = 0x%X (WIFIREADY=0x%X, CONNECTED=0x%X)", 
@@ -251,7 +223,7 @@ static int wifiConnectCallback(int status) {
     return 0;
 }
 
-// WiFi enable thread function - waits for connection
+// WiFi enable thread function
 void* wifiEnableThreadFunc(void* arg) {
     logMsg("WiFi enable thread started");
     wifiEnabling = true;
@@ -316,7 +288,7 @@ void* wifiEnableThreadFunc(void* arg) {
     }
     
     // NetConnectAsync started successfully, callback will handle the rest
-    // But we need to wait here to keep thread alive and check for cancellation
+    // Wait here to keep thread alive and check for cancellation
     const int maxWaitSeconds = 30;
     const int checkIntervalMs = 500;
     int waitedMs = 0;
@@ -366,6 +338,7 @@ void startWifiEnable() {
     pthread_detach(wifiThread);
 }
 
+// Connection thread function
 void* connectionThreadFunc(void* arg) {
     logMsg("Connection thread started");
     isConnecting = true;
@@ -523,6 +496,7 @@ void stopConnection() {
     snprintf(connectionStatusBuffer, sizeof(connectionStatusBuffer), "Disconnected");
 }
 
+// Config functions
 void initConfig() {
     iv_buildpath("/mnt/ext1/system/config");
     appConfig = OpenConfig(CONFIG_FILE, configItems);
@@ -582,6 +556,7 @@ void wifiFailedHandler(int button) {
     
     if (button == 1) {
         logMsg("User chose to retry WiFi");
+        wifiRetryCount = 0; // Reset counter for manual retry
         startConnection();
     } else {
         logMsg("User cancelled WiFi retry");
