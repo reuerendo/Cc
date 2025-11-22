@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <sys/stat.h>
 #include <algorithm>
+#include <cstring>  // <--- Added this to fix 'strlen' error
 
 #define LOG_CACHE(fmt, ...) { \
     FILE* f = fopen("/mnt/ext1/system/calibre-connect.log", "a"); \
@@ -103,6 +104,8 @@ bool CacheManager::loadCache() {
     
     // Iterate through cache entries
     json_object_object_foreach(root, key, val) {
+        (void)key; // Silences the "unused variable" warning
+        
         json_object* bookObj = NULL;
         json_object* lastUsedObj = NULL;
         
@@ -178,11 +181,7 @@ bool CacheManager::saveCache() {
         
         const BookMetadata& meta = entry.second.metadata;
         
-        // We construct the key as UUID+lpath for Calibre compatibility if viewed externally,
-        // but internally we index by lpath. For JSON storage, let's use the lpath as key
-        // to be consistent with our load logic, OR we can use UUID+Lpath as key 
-        // if we want to match Android implementation exactly. 
-        // PocketBook file system is path-based, so LPATH is the master key.
+        // Use lpath as the key for JSON
         std::string jsonKey = meta.lpath; 
         
         // Add book fields
@@ -214,6 +213,7 @@ bool CacheManager::saveCache() {
         return false;
     }
     
+    // Now valid because <cstring> is included
     fwrite(jsonStr, 1, strlen(jsonStr), f);
     fclose(f);
     
@@ -245,7 +245,6 @@ void CacheManager::updateCache(const BookMetadata& metadata) {
         return;
     }
     
-    // We merge existing cache data if possible to preserve UUID if the incoming metadata has it missing
     std::string uuidToStore = metadata.uuid;
     
     auto it = cacheData.find(metadata.lpath);
@@ -254,9 +253,6 @@ void CacheManager::updateCache(const BookMetadata& metadata) {
             uuidToStore = it->second.metadata.uuid;
         }
     }
-    
-    // If we still don't have a UUID and we are supposed to cache this, 
-    // we rely on what was passed. If empty, Calibre will treat as new.
     
     BookMetadata newMeta = metadata;
     newMeta.uuid = uuidToStore;
