@@ -91,7 +91,6 @@ static pthread_t connectionThread;
 static bool isConnecting = false;
 static bool shouldStop = false;
 static volatile bool exitRequested = false;
-static bool configEditorOpen = false;
 
 // Forward declarations
 int mainEventHandler(int type, int par1, int par2);
@@ -106,89 +105,8 @@ static iconfigedit configItems[] = {
         (char*)"Connection",
         NULL,
         (char*)KEY_CONNECTION,
-        (char*)"Disconnected",  // Will be updated dynamically
+        connectionStatusBuffer, 
         NULL,
-        NULL,
-        NULL
-    },
-    {
-        CFG_IPADDR,
-        NULL,
-        (char *)"IP Address",
-        NULL,
-        (char *)KEY_IP,
-        (char *)DEFAULT_IP,
-        NULL,
-        NULL,
-        NULL
-    },
-    {
-        CFG_NUMBER,
-        NULL,
-        (char *)"Port",
-        NULL,
-        (char *)KEY_PORT,
-        (char *)DEFAULT_PORT,
-        NULL,
-        NULL,
-        NULL
-    },
-    {
-        CFG_PASSWORD,
-        NULL,
-        (char *)"Password",
-        NULL,
-        (char *)KEY_PASSWORD,
-        (char *)DEFAULT_PASSWORD,
-        NULL,
-        NULL,
-        NULL
-    },
-    {
-        CFG_TEXT,
-        NULL,
-        (char *)"Read Status Column",
-        NULL,
-        (char *)KEY_READ_COLUMN,
-        (char *)DEFAULT_READ_COLUMN,
-        NULL,
-        NULL,
-        NULL
-    },
-    {
-        CFG_TEXT,
-        NULL,
-        (char *)"Read Date Column",
-        NULL,
-        (char *)KEY_READ_DATE_COLUMN,
-        (char *)DEFAULT_READ_DATE_COLUMN,
-        NULL,
-        NULL,
-        NULL
-    },
-    {
-        CFG_TEXT,
-        NULL,
-        (char *)"Favorite Column",
-        NULL,
-        (char *)KEY_FAVORITE_COLUMN,
-        (char *)DEFAULT_FAVORITE_COLUMN,
-        NULL,
-        NULL,
-        NULL
-    },
-    {
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0
-    }
-};
         NULL,
         NULL
     },
@@ -268,19 +186,14 @@ void updateConnectionStatus(const char* status) {
     logMsg("Status update: %s", status);
     snprintf(connectionStatusBuffer, sizeof(connectionStatusBuffer), "%s", status);
     
-    // Update config value without triggering screen refresh
+    // Update config value to trigger redraw
     if (appConfig) {
         WriteString(appConfig, KEY_CONNECTION, status);
+        // Force redraw of config editor
+        RepaintConfigItems();
     }
     
-    // Update config editor display value
-    configItems[0].deflt = connectionStatusBuffer;
-    
-    // Only update if config editor is open
-    if (configEditorOpen) {
-        // Send update event for async UI update
-        SendEvent(mainEventHandler, EVT_USER_UPDATE, 0, 0);
-    }
+    SendEvent(mainEventHandler, EVT_USER_UPDATE, 0, 0);
 }
 
 void notifyConnectionFailed(const char* errorMsg) {
@@ -301,10 +214,6 @@ void notifySyncComplete(int booksReceived) {
 // Check if WiFi is ready and connected
 bool isWiFiReady() {
     int netStatus = QueryNetwork();
-    logMsg("WiFi status check: 0x%X (READY: %d, CONNECTED: %d)", 
-           netStatus, 
-           (netStatus & NET_WIFIREADY) ? 1 : 0,
-           (netStatus & NET_CONNECTED) ? 1 : 0);
     return (netStatus & NET_WIFIREADY) && (netStatus & NET_CONNECTED);
 }
 
@@ -318,12 +227,12 @@ bool enableWiFi() {
             logMsg("WiFi already connected");
             return true;
         }
-        logMsg("WiFi enabled but not connected yet");
+        logMsg("WiFi enabled but not connected");
         return false;
     }
     
     logMsg("WiFi is not enabled, attempting to enable");
-    int result = WiFiPower(1);
+    int result = WiFiPower(NET_WIFI);
     if (result != NET_OK) {
         logMsg("Failed to enable WiFi: %d", result);
         return false;
@@ -400,7 +309,7 @@ void* connectionThreadFunc(void* arg) {
     updateConnectionStatus("Connected");
     
     protocol->handleMessages([](const std::string& status) {
-        // Callback from protocol - could update status here if needed
+        // Callback from protocol
     });
     
     logMsg("Disconnecting");
@@ -423,10 +332,7 @@ void* connectionThreadFunc(void* arg) {
 }
 
 void startConnection() {
-    if (isConnecting) {
-        logMsg("Already connecting, ignoring request");
-        return;
-    }
+    if (isConnecting) return;
     
     logMsg("startConnection called");
     
@@ -439,23 +345,17 @@ void startConnection() {
         // Try to enable WiFi
         enableWiFi();
         
-        // Give it time to connect (try for up to 5 seconds)
-        for (int i = 0; i < 10; i++) {
-            usleep(500000); // 0.5 seconds
-            if (isWiFiReady()) {
-                logMsg("WiFi became ready after %d attempts", i + 1);
-                break;
-            }
-        }
-        
-        HideHourglass();
+        // Give it a moment and check again
+        sleep(1);
         
         if (!isWiFiReady()) {
+            HideHourglass();
             updateConnectionStatus("Disconnected (WiFi not ready)");
             logMsg("WiFi still not ready after enable attempt");
             return;
         }
         
+        HideHourglass();
         logMsg("WiFi is now ready");
     }
     
@@ -500,7 +400,7 @@ void stopConnection() {
         isConnecting = false;
     }
     
-    updateConnectionStatus("Disconnected");
+    snprintf(connectionStatusBuffer, sizeof(connectionStatusBuffer), "Disconnected");
 }
 
 void initConfig() {
@@ -522,17 +422,8 @@ void initConfig() {
     }
 
     if (appConfig) {
-        // Read saved status or set to disconnected
-        const char* savedStatus = ReadString(appConfig, KEY_CONNECTION, "Disconnected");
-        snprintf(connectionStatusBuffer, sizeof(connectionStatusBuffer), "%s", savedStatus);
-        
-        // Always reset to disconnected on app start
         snprintf(connectionStatusBuffer, sizeof(connectionStatusBuffer), "Disconnected");
         WriteString(appConfig, KEY_CONNECTION, "Disconnected");
-        SaveConfig(appConfig);
-        
-        // Update config items with current status
-        configItems[0].deflt = connectionStatusBuffer;
     }
 }
 
@@ -573,7 +464,6 @@ void configCloseHandler() {
 
 void showMainScreen() {
     ClearScreen();
-    configEditorOpen = true;
     OpenConfigEditor(
         (char *)"Connect to Calibre",
         appConfig,
@@ -581,7 +471,6 @@ void showMainScreen() {
         configCloseHandler,
         configItemChangedHandler
     );
-    // OpenConfigEditor does automatic update, no need for explicit FullUpdate
 }
 
 void performExit() {
@@ -596,7 +485,6 @@ void performExit() {
     stopConnection();
     
     logMsg("Closing config editor...");
-    configEditorOpen = false;
     CloseConfigLevel();
     
     saveAndCloseConfig();
@@ -636,12 +524,8 @@ int mainEventHandler(int type, int par1, int par2) {
             break;
             
         case EVT_USER_UPDATE:
-            // Update only the changed config item without full screen refresh
-            logMsg("Updating config display (no full update)");
-            if (configEditorOpen) {
-                UpdateCurrentConfigPage();
-                // No screen update call - let the system handle it
-            }
+            // Force full update of config editor to show new status
+            PartialUpdate(0, 0, ScreenWidth(), ScreenHeight());
             break;
             
         case EVT_CONNECTION_FAILED:
