@@ -204,9 +204,16 @@ void notifyConnectionFailed(const char* errorMsg) {
 void notifySyncComplete(int booksReceived) {
     logMsg("Sync complete: %d books received", booksReceived);
     booksReceivedCount = booksReceived;
-    snprintf(syncCompleteBuffer, sizeof(syncCompleteBuffer), 
-             "Synchronization complete!\n%d book%s received from Calibre.", 
-             booksReceived, booksReceived == 1 ? "" : "s");
+    
+    if (booksReceived == 0) {
+        snprintf(syncCompleteBuffer, sizeof(syncCompleteBuffer), 
+                 "Synchronization finished.\nNo new books received.");
+    } else {
+        snprintf(syncCompleteBuffer, sizeof(syncCompleteBuffer), 
+                 "Synchronization complete!\nReceived %d new book%s.", 
+                 booksReceived, booksReceived == 1 ? "" : "s");
+    }
+    
     SendEvent(mainEventHandler, EVT_SYNC_COMPLETE, 0, 0);
 }
 
@@ -290,9 +297,7 @@ void* connectionThreadFunc(void* arg) {
     updateConnectionStatus("Disconnected");
     isConnecting = false;
     
-    if (booksReceived > 0) {
-        notifySyncComplete(booksReceived);
-    }
+    notifySyncComplete(booksReceived);
     
     return NULL;
 }
@@ -560,7 +565,7 @@ int mainEventHandler(int type, int par1, int par2) {
             
         case EVT_SYNC_COMPLETE:
             logMsg("Showing sync complete message");
-            Message(ICON_INFORMATION, "Success", syncCompleteBuffer, 3000);
+            Message(ICON_INFORMATION, "Success", syncCompleteBuffer, 5000);
             break;
             
         case EVT_SHOW:
