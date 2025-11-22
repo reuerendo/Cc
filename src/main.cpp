@@ -179,14 +179,14 @@ static iconfigedit configItems[] = {
     },
     {
         0,
-        NULL,
-        NULL,
-        NULL,
-        NULL,
-        NULL,
-        NULL,
-        NULL,
-        NULL
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
     }
 };
         NULL,
