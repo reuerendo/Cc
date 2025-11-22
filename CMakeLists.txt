@@ -13,7 +13,7 @@ if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
     set(CMAKE_TOOLCHAIN_FILE "${CMAKE_SOURCE_DIR}/toolchain.cmake")
 endif()
 
-# Include directories (добавлен текущий каталог src и include для библиотек)
+# Include directories
 include_directories(
     ${CMAKE_SOURCE_DIR}/src
     ${TOOLCHAIN_PATH}/usr/arm-obreey-linux-gnueabi/sysroot/usr/include
@@ -26,23 +26,25 @@ link_directories(
     ${TOOLCHAIN_PATH}/usr/arm-obreey-linux-gnueabi/sysroot/usr/lib
 )
 
-# Source files (Добавлены все cpp файлы)
+# Source files - ADDED cache_manager.cpp
 set(SOURCES
     src/main.cpp
     src/network.cpp
     src/calibre_protocol.cpp
     src/book_manager.cpp
+    src/cache_manager.cpp
 )
 
 # Create executable
 add_executable(${PROJECT_NAME} ${SOURCES})
 
-# Link libraries (Добавлены json-c, crypto, sqlite3, pthread, z)
+# Link libraries - ADDED ssl (for OpenSSL SHA)
 target_link_libraries(${PROJECT_NAME}
     inkview
     freetype
     json-c
     crypto
+    ssl
     sqlite3
     z
     pthread

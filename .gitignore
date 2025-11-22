@@ -39,3 +39,7 @@ Thumbs.db
 *.su
 *.idb
 *.pdb
+
+# Cache files (created by application on device)
+calibre_cache_*.json
+calibre-connect.log
