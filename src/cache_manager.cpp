@@ -2,6 +2,7 @@
 #include <json-c/json.h>
 #include <ctime>
 #include <cstdio>
+#include <cstring>
 #include <sys/stat.h>
 #include <algorithm>
 
@@ -108,7 +109,10 @@ bool CacheManager::loadCache() {
     int loaded = 0;
     
     // Iterate through cache entries
-    json_object_object_foreach(root, key, val) {
+    json_object_object_foreach(root, cacheKey, val) {
+        // Suppress unused variable warning
+        (void)cacheKey;
+        
         json_object* bookObj = NULL;
         json_object* lastUsedObj = NULL;
         
@@ -176,8 +180,8 @@ bool CacheManager::loadCache() {
         std::string lastUsed = lastUsedStr ? lastUsedStr : "";
         
         if (!metadata.uuid.empty() && !metadata.lpath.empty()) {
-            std::string cacheKey = makeCacheKey(metadata.uuid, metadata.lpath);
-            cacheData[cacheKey] = CacheEntry(metadata, lastUsed);
+            std::string cacheKeyStr = makeCacheKey(metadata.uuid, metadata.lpath);
+            cacheData[cacheKeyStr] = CacheEntry(metadata, lastUsed);
             loaded++;
         }
     }
@@ -244,6 +248,14 @@ bool CacheManager::saveCache() {
     const char* jsonStr = json_object_to_json_string_ext(
         root, JSON_C_TO_STRING_PRETTY);
     
+    if (!jsonStr) {
+        LOG_CACHE("Failed to serialize cache to JSON");
+        json_object_put(root);
+        return false;
+    }
+    
+    size_t jsonLen = std::strlen(jsonStr);
+    
     FILE* f = fopen(cacheFilePath.c_str(), "w");
     if (!f) {
         LOG_CACHE("Failed to open cache file for writing");
@@ -251,7 +263,7 @@ bool CacheManager::saveCache() {
         return false;
     }
     
-    fwrite(jsonStr, 1, strlen(jsonStr), f);
+    fwrite(jsonStr, 1, jsonLen, f);
     fclose(f);
     
     json_object_put(root);
