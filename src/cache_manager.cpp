@@ -2,7 +2,6 @@
 #include <json-c/json.h>
 #include <ctime>
 #include <cstdio>
-#include <cstring>
 #include <sys/stat.h>
 #include <algorithm>
 
@@ -30,12 +29,6 @@ bool CacheManager::initialize(const std::string& deviceUuid) {
     LOG_CACHE("Cache file path: %s", cacheFilePath.c_str());
     
     return loadCache();
-}
-
-std::string CacheManager::makeCacheKey(const std::string& uuid, 
-                                      const std::string& lpath) const {
-    if (uuid.empty() || lpath.empty()) return "";
-    return uuid + "|" + lpath;
 }
 
 std::string CacheManager::getCurrentTimestamp() const {
@@ -109,10 +102,7 @@ bool CacheManager::loadCache() {
     int loaded = 0;
     
     // Iterate through cache entries
-    json_object_object_foreach(root, cacheKey, val) {
-        // Suppress unused variable warning
-        (void)cacheKey;
-        
+    json_object_object_foreach(root, key, val) {
         json_object* bookObj = NULL;
         json_object* lastUsedObj = NULL;
         
@@ -137,31 +127,13 @@ bool CacheManager::loadCache() {
             const char* str = json_object_get_string(tmp);
             metadata.authors = str ? str : "";
         }
-        if (json_object_object_get_ex(bookObj, "author_sort", &tmp)) {
-            const char* str = json_object_get_string(tmp);
-            metadata.authorSort = str ? str : "";
-        }
         if (json_object_object_get_ex(bookObj, "lpath", &tmp)) {
             const char* str = json_object_get_string(tmp);
             metadata.lpath = str ? str : "";
         }
-        if (json_object_object_get_ex(bookObj, "series", &tmp)) {
-            const char* str = json_object_get_string(tmp);
-            metadata.series = str ? str : "";
-        }
-        if (json_object_object_get_ex(bookObj, "series_index", &tmp)) {
-            metadata.seriesIndex = json_object_get_int(tmp);
-        }
-        if (json_object_object_get_ex(bookObj, "size", &tmp)) {
-            metadata.size = json_object_get_int64(tmp);
-        }
         if (json_object_object_get_ex(bookObj, "last_modified", &tmp)) {
             const char* str = json_object_get_string(tmp);
             metadata.lastModified = str ? str : "";
-        }
-        if (json_object_object_get_ex(bookObj, "isbn", &tmp)) {
-            const char* str = json_object_get_string(tmp);
-            metadata.isbn = str ? str : "";
         }
         
         // Parse sync fields
@@ -179,9 +151,9 @@ bool CacheManager::loadCache() {
         const char* lastUsedStr = json_object_get_string(lastUsedObj);
         std::string lastUsed = lastUsedStr ? lastUsedStr : "";
         
-        if (!metadata.uuid.empty() && !metadata.lpath.empty()) {
-            std::string cacheKeyStr = makeCacheKey(metadata.uuid, metadata.lpath);
-            cacheData[cacheKeyStr] = CacheEntry(metadata, lastUsed);
+        // Store using lpath as key
+        if (!metadata.lpath.empty()) {
+            cacheData[metadata.lpath] = CacheEntry(metadata, lastUsed);
             loaded++;
         }
     }
@@ -206,55 +178,34 @@ bool CacheManager::saveCache() {
         
         const BookMetadata& meta = entry.second.metadata;
         
+        // We construct the key as UUID+lpath for Calibre compatibility if viewed externally,
+        // but internally we index by lpath. For JSON storage, let's use the lpath as key
+        // to be consistent with our load logic, OR we can use UUID+Lpath as key 
+        // if we want to match Android implementation exactly. 
+        // PocketBook file system is path-based, so LPATH is the master key.
+        std::string jsonKey = meta.lpath; 
+        
         // Add book fields
-        json_object_object_add(bookObj, "uuid", 
-            json_object_new_string(meta.uuid.c_str()));
-        json_object_object_add(bookObj, "title", 
-            json_object_new_string(meta.title.c_str()));
-        json_object_object_add(bookObj, "authors", 
-            json_object_new_string(meta.authors.c_str()));
-        json_object_object_add(bookObj, "author_sort", 
-            json_object_new_string(meta.authorSort.c_str()));
-        json_object_object_add(bookObj, "lpath", 
-            json_object_new_string(meta.lpath.c_str()));
-        json_object_object_add(bookObj, "series", 
-            json_object_new_string(meta.series.c_str()));
-        json_object_object_add(bookObj, "series_index", 
-            json_object_new_int(meta.seriesIndex));
-        json_object_object_add(bookObj, "size", 
-            json_object_new_int64(meta.size));
-        json_object_object_add(bookObj, "last_modified", 
-            json_object_new_string(meta.lastModified.c_str()));
-        json_object_object_add(bookObj, "isbn", 
-            json_object_new_string(meta.isbn.c_str()));
+        json_object_object_add(bookObj, "uuid", json_object_new_string(meta.uuid.c_str()));
+        json_object_object_add(bookObj, "title", json_object_new_string(meta.title.c_str()));
+        json_object_object_add(bookObj, "authors", json_object_new_string(meta.authors.c_str()));
+        json_object_object_add(bookObj, "lpath", json_object_new_string(meta.lpath.c_str()));
+        json_object_object_add(bookObj, "last_modified", json_object_new_string(meta.lastModified.c_str()));
         
         // Add sync fields
-        json_object_object_add(bookObj, "_is_read_", 
-            json_object_new_boolean(meta.isRead));
+        json_object_object_add(bookObj, "_is_read_", json_object_new_boolean(meta.isRead));
         if (!meta.lastReadDate.empty()) {
-            json_object_object_add(bookObj, "_last_read_date_", 
-                json_object_new_string(meta.lastReadDate.c_str()));
+            json_object_object_add(bookObj, "_last_read_date_", json_object_new_string(meta.lastReadDate.c_str()));
         }
-        json_object_object_add(bookObj, "_is_favorite_", 
-            json_object_new_boolean(meta.isFavorite));
+        json_object_object_add(bookObj, "_is_favorite_", json_object_new_boolean(meta.isFavorite));
         
         json_object_object_add(entryObj, "book", bookObj);
-        json_object_object_add(entryObj, "last_used", 
-            json_object_new_string(entry.second.lastUsed.c_str()));
+        json_object_object_add(entryObj, "last_used", json_object_new_string(entry.second.lastUsed.c_str()));
         
-        json_object_object_add(root, entry.first.c_str(), entryObj);
+        json_object_object_add(root, jsonKey.c_str(), entryObj);
     }
     
-    const char* jsonStr = json_object_to_json_string_ext(
-        root, JSON_C_TO_STRING_PRETTY);
-    
-    if (!jsonStr) {
-        LOG_CACHE("Failed to serialize cache to JSON");
-        json_object_put(root);
-        return false;
-    }
-    
-    size_t jsonLen = std::strlen(jsonStr);
+    const char* jsonStr = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PRETTY);
     
     FILE* f = fopen(cacheFilePath.c_str(), "w");
     if (!f) {
@@ -263,7 +214,7 @@ bool CacheManager::saveCache() {
         return false;
     }
     
-    fwrite(jsonStr, 1, jsonLen, f);
+    fwrite(jsonStr, 1, strlen(jsonStr), f);
     fclose(f);
     
     json_object_put(root);
@@ -272,71 +223,65 @@ bool CacheManager::saveCache() {
     return true;
 }
 
-bool CacheManager::isInCache(const std::string& uuid, 
-                             const std::string& lpath,
-                             const std::string& lastModified) const {
-    std::string key = makeCacheKey(uuid, lpath);
-    
-    auto it = cacheData.find(key);
-    if (it == cacheData.end()) {
-        return false;
+std::string CacheManager::getUuidForLpath(const std::string& lpath) const {
+    auto it = cacheData.find(lpath);
+    if (it != cacheData.end()) {
+        return it->second.metadata.uuid;
     }
-    
-    // Check if last_modified matches
-    return it->second.metadata.lastModified == lastModified;
+    return "";
 }
 
-BookMetadata CacheManager::getCachedMetadata(const std::string& uuid,
-                                            const std::string& lpath) const {
-    std::string key = makeCacheKey(uuid, lpath);
-    
-    auto it = cacheData.find(key);
+bool CacheManager::getCachedMetadata(const std::string& lpath, BookMetadata& outMetadata) const {
+    auto it = cacheData.find(lpath);
     if (it != cacheData.end()) {
-        return it->second.metadata;
+        outMetadata = it->second.metadata;
+        return true;
     }
-    
-    return BookMetadata();
+    return false;
 }
 
 void CacheManager::updateCache(const BookMetadata& metadata) {
-    if (metadata.uuid.empty() || metadata.lpath.empty()) {
-        LOG_CACHE("Cannot update cache: missing uuid or lpath");
+    if (metadata.lpath.empty()) {
         return;
     }
     
-    std::string key = makeCacheKey(metadata.uuid, metadata.lpath);
-    std::string timestamp = getCurrentTimestamp();
+    // We merge existing cache data if possible to preserve UUID if the incoming metadata has it missing
+    std::string uuidToStore = metadata.uuid;
     
-    cacheData[key] = CacheEntry(metadata, timestamp);
+    auto it = cacheData.find(metadata.lpath);
+    if (it != cacheData.end()) {
+        if (uuidToStore.empty()) {
+            uuidToStore = it->second.metadata.uuid;
+        }
+    }
+    
+    // If we still don't have a UUID and we are supposed to cache this, 
+    // we rely on what was passed. If empty, Calibre will treat as new.
+    
+    BookMetadata newMeta = metadata;
+    newMeta.uuid = uuidToStore;
+    
+    std::string timestamp = getCurrentTimestamp();
+    cacheData[metadata.lpath] = CacheEntry(newMeta, timestamp);
 }
 
-void CacheManager::removeFromCache(const std::string& uuid, 
-                                   const std::string& lpath) {
-    std::string key = makeCacheKey(uuid, lpath);
-    cacheData.erase(key);
-    
-    LOG_CACHE("Removed from cache: %s", key.c_str());
+void CacheManager::removeFromCache(const std::string& lpath) {
+    cacheData.erase(lpath);
+    LOG_CACHE("Removed from cache: %s", lpath.c_str());
 }
 
 void CacheManager::purgeOldEntries(int days) {
     time_t now = time(NULL);
     time_t threshold = now - (days * 24 * 60 * 60);
     
-    std::vector<std::string> toRemove;
-    
-    for (const auto& entry : cacheData) {
-        time_t lastUsed = parseTimestamp(entry.second.lastUsed);
+    auto it = cacheData.begin();
+    while (it != cacheData.end()) {
+        time_t lastUsed = parseTimestamp(it->second.lastUsed);
         if (lastUsed > 0 && lastUsed < threshold) {
-            toRemove.push_back(entry.first);
+            it = cacheData.erase(it);
+        } else {
+            ++it;
         }
-    }
-    
-    for (const auto& key : toRemove) {
-        cacheData.erase(key);
-    }
-    
-    if (!toRemove.empty()) {
-        LOG_CACHE("Purged %d old cache entries", (int)toRemove.size());
     }
 }
 

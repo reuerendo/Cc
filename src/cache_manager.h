@@ -28,19 +28,19 @@ public:
     bool loadCache();
     bool saveCache();
     
-    // Check if book metadata is in cache and up-to-date
-    bool isInCache(const std::string& uuid, const std::string& lpath, 
-                   const std::string& lastModified) const;
-    
-    // Get cached metadata
-    BookMetadata getCachedMetadata(const std::string& uuid, 
-                                   const std::string& lpath) const;
+    // Get cached UUID for a specific file path
+    // Returns empty string if not found
+    std::string getUuidForLpath(const std::string& lpath) const;
+
+    // Get full cached metadata
+    // Returns true if found and fills outMetadata
+    bool getCachedMetadata(const std::string& lpath, BookMetadata& outMetadata) const;
     
     // Update or add to cache
     void updateCache(const BookMetadata& metadata);
     
     // Remove from cache
-    void removeFromCache(const std::string& uuid, const std::string& lpath);
+    void removeFromCache(const std::string& lpath);
     
     // Clear old entries (called during save)
     void purgeOldEntries(int days = 30);
@@ -54,11 +54,9 @@ public:
 private:
     std::string deviceUuid;
     std::string cacheFilePath;
-    std::map<std::string, CacheEntry> cacheData; // Key: uuid + lpath
     
-    // Helper to generate cache key
-    std::string makeCacheKey(const std::string& uuid, 
-                            const std::string& lpath) const;
+    // Key: lpath (file path relative to root), Value: CacheEntry
+    std::map<std::string, CacheEntry> cacheData; 
     
     // Helper to get current ISO timestamp
     std::string getCurrentTimestamp() const;

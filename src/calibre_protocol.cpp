@@ -454,7 +454,7 @@ bool CalibreProtocol::handleSetLibraryInfo(json_object* args) {
 }
 
 bool CalibreProtocol::handleGetBookCount(json_object* args) {
-    // 1. Load all books into session cache
+    // 1. Load all books from file system/DB
     sessionBooks = bookManager->getAllBooks();
     int count = sessionBooks.size();
     
@@ -465,9 +465,23 @@ bool CalibreProtocol::handleGetBookCount(json_object* args) {
         useCache = json_object_get_boolean(cacheObj);
     }
     
+    // 3. IMPORTANT: Patch Session Books with Cached UUIDs
+    // BookManager reads from device FS, so it has no UUIDs. We must fetch them from cache.
+    if (cacheManager) {
+        int matched = 0;
+        for (auto& book : sessionBooks) {
+            std::string cachedUuid = cacheManager->getUuidForLpath(book.lpath);
+            if (!cachedUuid.empty()) {
+                book.uuid = cachedUuid;
+                matched++;
+            }
+        }
+        logProto("UUID Patching: %d/%d books matched in cache", matched, count);
+    }
+    
     logProto("GetBookCount: %d books, useCache=%d", count, useCache);
 
-    // 3. Send response with count
+    // 4. Send response with count
     json_object* response = json_object_new_object();
     json_object_object_add(response, "count", json_object_new_int(count));
     json_object_object_add(response, "willStream", json_object_new_boolean(true));
@@ -479,12 +493,13 @@ bool CalibreProtocol::handleGetBookCount(json_object* args) {
     }
     freeJSON(response);
     
-    // 4. Send book list (one by one)
+    // 5. Send book list (one by one)
     for (int i = 0; i < count; i++) {
         json_object* bookJson = NULL;
         
         if (useCache) {
             // Send only brief info + priKey (index)
+            // Driver will compare this against its own cache.
             bookJson = cachedMetadataToJson(sessionBooks[i], i);
         } else {
             // Send full metadata
@@ -796,20 +811,11 @@ bool CalibreProtocol::handleDeleteBook(json_object* args) {
         json_object* lpathObj = json_object_array_get_idx(lpathsObj, i);
         std::string lpath = json_object_get_string(lpathObj);
         
-        // Find UUID before deletion for cache removal
-        std::string uuid;
-        for (const auto& book : sessionBooks) {
-            if (book.lpath == lpath) {
-                uuid = book.uuid;
-                break;
-            }
-        }
-        
         bookManager->deleteBook(lpath);
         
-        // Remove from cache
-        if (cacheManager && !uuid.empty()) {
-            cacheManager->removeFromCache(uuid, lpath);
+        // Remove from cache using lpath
+        if (cacheManager) {
+            cacheManager->removeFromCache(lpath);
         }
             
         json_object* response = json_object_new_object();
