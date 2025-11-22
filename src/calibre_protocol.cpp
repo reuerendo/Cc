@@ -621,35 +621,41 @@ BookMetadata CalibreProtocol::jsonToMetadata(json_object* obj) {
     if (json_object_object_get_ex(obj, "size", &val)) metadata.size = json_object_get_int64(val);
     if (json_object_object_get_ex(obj, "last_modified", &val)) metadata.lastModified = safeGetJsonString(val);
 
-    bool hasSyncFlag = false;
-
+    // Priority 1: Explicit sync flag from driver (_is_read_)
+    bool hasExplicitSyncFlag = false;
     if (json_object_object_get_ex(obj, "_is_read_", &val)) {
         metadata.isRead = json_object_get_boolean(val);
-        hasSyncFlag = true;
+        hasExplicitSyncFlag = true;
     }
     
+    // Priority 2: Last read date from driver (_last_read_date_)
+    bool hasExplicitReadDate = false;
+    if (json_object_object_get_ex(obj, "_last_read_date_", &val)) {
+        const char* dateStr = json_object_get_string(val);
+        if (dateStr && strlen(dateStr) > 0) {
+            metadata.lastReadDate = dateStr;
+            hasExplicitReadDate = true;
+        }
+    }
+    
+    // Priority 3: User metadata columns (only as fallback)
     json_object* userMeta = NULL;
     if (json_object_object_get_ex(obj, "user_metadata", &userMeta)) {
-        if (!readColumn.empty()) {
-            if (!hasSyncFlag) {
-                bool readVal = getUserMetadataBool(userMeta, readColumn);
-                if (readVal) metadata.isRead = true;
-            }
+        // Only use user_metadata if driver didn't provide explicit sync values
+        if (!hasExplicitSyncFlag && !readColumn.empty()) {
+            metadata.isRead = getUserMetadataBool(userMeta, readColumn);
         }
         
-        if (!favoriteColumn.empty()) {
-            metadata.isFavorite = getUserMetadataBool(userMeta, favoriteColumn);
-        }
-        
-        if (!readDateColumn.empty()) {
+        if (!hasExplicitReadDate && !readDateColumn.empty()) {
             std::string dateStr = getUserMetadataString(userMeta, readDateColumn);
             if (!dateStr.empty()) {
                 metadata.lastReadDate = dateStr;
-                // Не перезаписываем статус прочтения, если драйвер уже прислал его
-                if (!hasSyncFlag) {
-                    metadata.isRead = true; 
-                }
             }
+        }
+        
+        // Favorite status is always from user metadata
+        if (!favoriteColumn.empty()) {
+            metadata.isFavorite = getUserMetadataBool(userMeta, favoriteColumn);
         }
     }
     
