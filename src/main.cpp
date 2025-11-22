@@ -182,23 +182,97 @@ static iconfigedit configItems[] = {
         NULL
     }
 };
+        NULL,
+        NULL
+    },
+    {
+        CFG_IPADDR,
+        NULL,
+        (char *)"IP Address",
+        NULL,
+        (char *)KEY_IP,
+        (char *)DEFAULT_IP,
+        NULL,
+        NULL
+    },
+    {
+        CFG_NUMBER,
+        NULL,
+        (char *)"Port",
+        NULL,
+        (char *)KEY_PORT,
+        (char *)DEFAULT_PORT,
+        NULL,
+        NULL
+    },
+    {
+        CFG_PASSWORD,
+        NULL,
+        (char *)"Password",
+        NULL,
+        (char *)KEY_PASSWORD,
+        (char *)DEFAULT_PASSWORD,
+        NULL,
+        NULL
+    },
+    {
+        CFG_TEXT,
+        NULL,
+        (char *)"Read Status Column",
+        NULL,
+        (char *)KEY_READ_COLUMN,
+        (char *)DEFAULT_READ_COLUMN,
+        NULL,
+        NULL
+    },
+    {
+        CFG_TEXT,
+        NULL,
+        (char *)"Read Date Column",
+        NULL,
+        (char *)KEY_READ_DATE_COLUMN,
+        (char *)DEFAULT_READ_DATE_COLUMN,
+        NULL,
+        NULL
+    },
+    {
+        CFG_TEXT,
+        NULL,
+        (char *)"Favorite Column",
+        NULL,
+        (char *)KEY_FAVORITE_COLUMN,
+        (char *)DEFAULT_FAVORITE_COLUMN,
+        NULL,
+        NULL
+    },
+    {
+        0,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL
+    }
+};
 
 void updateConnectionStatus(const char* status) {
     logMsg("Status update: %s", status);
     snprintf(connectionStatusBuffer, sizeof(connectionStatusBuffer), "%s", status);
     
-    // Update config value
+    // Update config value without triggering screen refresh
     if (appConfig) {
         WriteString(appConfig, KEY_CONNECTION, status);
-        SaveConfig(appConfig);
     }
     
     // Update config editor display value
     configItems[0].deflt = connectionStatusBuffer;
     
-    // Force config page refresh if editor is open
+    // Only update if config editor is open
     if (configEditorOpen) {
-        UpdateCurrentConfigPage();
+        // Send update event for async UI update
+        SendEvent(mainEventHandler, EVT_USER_UPDATE, 0, 0);
     }
 }
 
@@ -500,8 +574,7 @@ void showMainScreen() {
         configCloseHandler,
         configItemChangedHandler
     );
-    // Only one update at initialization
-    FullUpdate();
+    // OpenConfigEditor does automatic update, no need for explicit FullUpdate
 }
 
 void performExit() {
@@ -556,10 +629,11 @@ int mainEventHandler(int type, int par1, int par2) {
             break;
             
         case EVT_USER_UPDATE:
-            // Minimal update without full screen redraw
-            logMsg("Updating config display");
+            // Update only the changed config item without full screen refresh
+            logMsg("Updating config display (no full update)");
             if (configEditorOpen) {
                 UpdateCurrentConfigPage();
+                // No screen update call - let the system handle it
             }
             break;
             
