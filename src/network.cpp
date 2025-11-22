@@ -3,15 +3,26 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <sys/select.h>
+#include <sys/stat.h>
 #include <cstdio>
 #include <ctime>
 #include <cstdarg>
+
+#define MAX_LOG_SIZE (256 * 1024)
 
 // Debug logging
 static FILE* netLogFile = NULL;
 
 static void initNetLog() {
     const char* logPath = "/mnt/ext1/system/calibre-connect.log";
+    
+    struct stat st;
+    if (stat(logPath, &st) == 0) {
+        if (st.st_size >= MAX_LOG_SIZE) {
+            remove(logPath);
+        }
+    }
+
     netLogFile = fopen(logPath, "a");
     if (netLogFile) {
         time_t now = time(NULL);
@@ -161,7 +172,6 @@ bool NetworkManager::receiveUDPResponse(std::string& host, int& port, int timeou
 
 bool NetworkManager::discoverCalibreServer(std::string& host, int& port,
                                            std::function<bool()> cancelCallback) {
-    logNetMsg("Starting Calibre server discovery...");
     
     if (!createUDPSocket()) {
         return false;
@@ -170,7 +180,6 @@ bool NetworkManager::discoverCalibreServer(std::string& host, int& port,
     // Try each broadcast port
     for (int i = 0; i < BROADCAST_PORT_COUNT; i++) {
         if (cancelCallback && cancelCallback()) {
-            logNetMsg("Discovery cancelled by callback");
             closeUDPSocket();
             return false;
         }
@@ -180,19 +189,17 @@ bool NetworkManager::discoverCalibreServer(std::string& host, int& port,
         }
         
         if (receiveUDPResponse(host, port, 3000)) {
-            logNetMsg("Server discovered at %s:%d", host.c_str(), port);
+            // Removed "Server discovered..." log
             closeUDPSocket();
             return true;
         }
     }
     
-    logNetMsg("Server discovery failed");
     closeUDPSocket();
     return false;
 }
 
 bool NetworkManager::connectToServer(const std::string& host, int port) {
-    logNetMsg("Connecting to server: %s:%d", host.c_str(), port);
     
     socketFd = socket(AF_INET, SOCK_STREAM, 0);
     if (socketFd < 0) {
@@ -287,13 +294,11 @@ bool NetworkManager::connectToServer(const std::string& host, int port) {
     setsockopt(socketFd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     setsockopt(socketFd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
     
-    logNetMsg("Connected successfully");
     return true;
 }
 
 void NetworkManager::disconnect() {
     if (socketFd >= 0) {
-        logNetMsg("Disconnecting TCP socket");
         close(socketFd);
         socketFd = -1;
     }
@@ -388,8 +393,6 @@ bool NetworkManager::sendJSON(CalibreOpcode opcode, const char* jsonData) {
     std::string message = "[" + std::to_string((int)opcode) + "," + jsonData + "]";
     std::string packet = std::to_string(message.length()) + message;
     
-    // Log only the opcode to avoid flooding logs with JSON data
-    logNetMsg("Sending JSON Opcode: %d", (int)opcode);
     
     return sendAll(packet.c_str(), packet.length());
 }
@@ -417,8 +420,6 @@ bool NetworkManager::receiveJSON(CalibreOpcode& opcode, std::string& jsonData) {
     int opcodeValue = atoi(message.substr(1, opcodeEnd - 1).c_str());
     opcode = (CalibreOpcode)opcodeValue;
     
-    // Log only the opcode
-    logNetMsg("Received JSON Opcode: %d", (int)opcode);
     return true;
 }
 
@@ -428,8 +429,6 @@ bool NetworkManager::sendBinaryData(const void* data, size_t length) {
         return false;
     }
     
-    // Log only for large files or significant transfers if needed, 
-    // but keeping it minimal here.
     return sendAll(data, length);
 }
 

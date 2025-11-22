@@ -9,6 +9,7 @@
 #include <stdarg.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 // Custom events
 #define EVT_USER_UPDATE 20001
@@ -20,11 +21,21 @@
 #define TOAST_CONNECTED 2
 #define TOAST_DISCONNECTED 3
 
+#define MAX_LOG_SIZE (256 * 1024)
+
 // Debug logging
 static FILE* logFile = NULL;
 
 void initLog() {
     const char* logPath = "/mnt/ext1/system/calibre-connect.log";
+    
+    struct stat st;
+    if (stat(logPath, &st) == 0) {
+        if (st.st_size >= MAX_LOG_SIZE) {
+            remove(logPath); 
+        }
+    }
+
     logFile = iv_fopen(logPath, "a");
     if (logFile) {
         time_t now = time(NULL);
