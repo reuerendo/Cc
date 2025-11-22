@@ -189,6 +189,8 @@ void updateConnectionStatus(const char* status) {
     // Update config value to trigger redraw
     if (appConfig) {
         WriteString(appConfig, KEY_CONNECTION, status);
+        // Force redraw of config editor
+        RepaintConfigItems();
     }
     
     SendEvent(mainEventHandler, EVT_USER_UPDATE, 0, 0);
@@ -212,6 +214,10 @@ void notifySyncComplete(int booksReceived) {
 // Check if WiFi is ready and connected
 bool isWiFiReady() {
     int netStatus = QueryNetwork();
+    logMsg("WiFi status check: 0x%X (READY: %d, CONNECTED: %d)", 
+           netStatus, 
+           (netStatus & NET_WIFIREADY) ? 1 : 0,
+           (netStatus & NET_CONNECTED) ? 1 : 0);
     return (netStatus & NET_WIFIREADY) && (netStatus & NET_CONNECTED);
 }
 
@@ -225,12 +231,12 @@ bool enableWiFi() {
             logMsg("WiFi already connected");
             return true;
         }
-        logMsg("WiFi enabled but not connected");
+        logMsg("WiFi enabled but not connected yet");
         return false;
     }
     
     logMsg("WiFi is not enabled, attempting to enable");
-    int result = WiFiPower(NET_WIFI);
+    int result = WiFiPower(1);
     if (result != NET_OK) {
         logMsg("Failed to enable WiFi: %d", result);
         return false;
@@ -330,7 +336,10 @@ void* connectionThreadFunc(void* arg) {
 }
 
 void startConnection() {
-    if (isConnecting) return;
+    if (isConnecting) {
+        logMsg("Already connecting, ignoring request");
+        return;
+    }
     
     logMsg("startConnection called");
     
@@ -343,17 +352,23 @@ void startConnection() {
         // Try to enable WiFi
         enableWiFi();
         
-        // Give it a moment and check again
-        sleep(1);
+        // Give it time to connect (try for up to 5 seconds)
+        for (int i = 0; i < 10; i++) {
+            usleep(500000); // 0.5 seconds
+            if (isWiFiReady()) {
+                logMsg("WiFi became ready after %d attempts", i + 1);
+                break;
+            }
+        }
+        
+        HideHourglass();
         
         if (!isWiFiReady()) {
-            HideHourglass();
             updateConnectionStatus("Disconnected (WiFi not ready)");
             logMsg("WiFi still not ready after enable attempt");
             return;
         }
         
-        HideHourglass();
         logMsg("WiFi is now ready");
     }
     
@@ -522,8 +537,8 @@ int mainEventHandler(int type, int par1, int par2) {
             break;
             
         case EVT_USER_UPDATE:
-            // Force full update of config editor to show new status
-            PartialUpdate(0, 0, ScreenWidth(), ScreenHeight());
+            // Force full update to show new status
+            FullUpdate();
             break;
             
         case EVT_CONNECTION_FAILED:
@@ -533,6 +548,14 @@ int mainEventHandler(int type, int par1, int par2) {
                    connectionErrorBuffer,
                    "Retry", "Cancel", 
                    retryConnectionHandler);
+            break;
+            
+        case EVT_SYNC_COMPLETE:
+            logMsg("Showing sync complete message");
+            Message(ICON_INFORMATION, 
+                    "Sync Complete", 
+                    syncCompleteBuffer, 
+                    5000);
             break;
             
         case EVT_SHOW:
