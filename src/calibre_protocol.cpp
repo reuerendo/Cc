@@ -621,15 +621,20 @@ BookMetadata CalibreProtocol::jsonToMetadata(json_object* obj) {
     if (json_object_object_get_ex(obj, "size", &val)) metadata.size = json_object_get_int64(val);
     if (json_object_object_get_ex(obj, "last_modified", &val)) metadata.lastModified = safeGetJsonString(val);
 
+    bool hasSyncFlag = false;
+
     if (json_object_object_get_ex(obj, "_is_read_", &val)) {
         metadata.isRead = json_object_get_boolean(val);
+        hasSyncFlag = true;
     }
     
     json_object* userMeta = NULL;
     if (json_object_object_get_ex(obj, "user_metadata", &userMeta)) {
         if (!readColumn.empty()) {
-            bool readVal = getUserMetadataBool(userMeta, readColumn);
-            if (readVal) metadata.isRead = true;
+            if (!hasSyncFlag) {
+                bool readVal = getUserMetadataBool(userMeta, readColumn);
+                if (readVal) metadata.isRead = true;
+            }
         }
         
         if (!favoriteColumn.empty()) {
@@ -640,7 +645,10 @@ BookMetadata CalibreProtocol::jsonToMetadata(json_object* obj) {
             std::string dateStr = getUserMetadataString(userMeta, readDateColumn);
             if (!dateStr.empty()) {
                 metadata.lastReadDate = dateStr;
-                metadata.isRead = true; 
+                // Не перезаписываем статус прочтения, если драйвер уже прислал его
+                if (!hasSyncFlag) {
+                    metadata.isRead = true; 
+                }
             }
         }
     }

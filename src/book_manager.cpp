@@ -119,10 +119,6 @@ std::string BookManager::getBookFilePath(const std::string& lpath) {
 }
 
 bool BookManager::processBookSettings(sqlite3* db, int bookId, const BookMetadata& metadata, int profileId) {
-    // Если нет флагов чтения или избранного, мы не трогаем настройки вообще (как в pb-db.lua)
-    if (!metadata.isRead && !metadata.isFavorite) {
-        return true; 
-    }
 
     int completed = metadata.isRead ? 1 : 0;
     int favorite = metadata.isFavorite ? 1 : 0;
