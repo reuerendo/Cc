@@ -1,3 +1,7 @@
+{
+type: uploaded file
+fileName: main.cpp
+fullContent:
 #include "inkview.h"
 #include "network.h"
 #include "calibre_protocol.h"
@@ -15,10 +19,9 @@
 #define EVT_CONNECTION_FAILED 20002
 #define EVT_SYNC_COMPLETE 20003
 #define EVT_BOOK_RECEIVED 20004
-#define EVT_SHOW_TOAST 20005  // New event for status messages
+#define EVT_SHOW_TOAST 20005
 
 // Toast types
-#define TOAST_CONNECTING 1
 #define TOAST_CONNECTED 2
 #define TOAST_DISCONNECTED 3
 
@@ -56,6 +59,7 @@ void logMsg(const char* format, ...) {
 
 void closeLog() {
     if (logFile) {
+        // Log closing time only
         time_t now = time(NULL);
         fprintf(logFile, "=== Calibre Connect Closed [%s] ===\n", ctime(&now));
         fflush(logFile);
@@ -120,7 +124,7 @@ static iconfigedit configItems[] = {
     {
         CFG_NUMBER,
         NULL,
-        (char *)"    Port",
+        (char *)"   Port",
         NULL,
         (char *)KEY_PORT,
         (char *)DEFAULT_PORT,
@@ -186,7 +190,6 @@ void notifyConnectionFailed(const char* errorMsg) {
 }
 
 void notifySyncComplete(int booksReceived) {
-    logMsg("Sync complete: %d books received", booksReceived);
     booksReceivedCount = booksReceived;
     
     if (booksReceived == 0) {
@@ -202,11 +205,6 @@ void notifySyncComplete(int booksReceived) {
 }
 
 void* connectionThreadFunc(void* arg) {
-    logMsg("Connection thread started");
-    
-    // Notify UI that we are attempting to connect
-    SendEvent(mainEventHandler, EVT_SHOW_TOAST, TOAST_CONNECTING, 0);
-    
     const char* ip = ReadString(appConfig, KEY_IP, DEFAULT_IP);
     int port = ReadInt(appConfig, KEY_PORT, atoi(DEFAULT_PORT));
     
@@ -224,30 +222,25 @@ void* connectionThreadFunc(void* arg) {
         password = "";
     }
     
-    logMsg("Connecting to Calibre server %s:%d", ip, port);
+    logMsg("Connecting to %s:%d", ip, port);
     
     if (shouldStop) {
-        logMsg("Connection cancelled before connect");
         isConnecting = false;
         return NULL;
     }
     
     // Try to connect to Calibre (TCP)
     if (!networkManager->connectToServer(ip, port)) {
-        logMsg("Connection failed");
         isConnecting = false;
         notifyConnectionFailed("Failed to connect to Calibre server.\nPlease check IP address and port.");
         return NULL;
     }
     
     if (shouldStop) {
-        logMsg("Connection cancelled after connect");
         networkManager->disconnect();
         isConnecting = false;
         return NULL;
     }
-    
-    logMsg("Connected, starting handshake");
     
     if (!protocol->performHandshake(password)) {
         logMsg("Handshake failed: %s", protocol->getErrorMessage().c_str());
@@ -268,10 +261,8 @@ void* connectionThreadFunc(void* arg) {
         if (status == "BOOK_SAVED") {
             int count = protocol->getBooksReceivedCount();
             SendEvent(mainEventHandler, EVT_BOOK_RECEIVED, count, 0);
-        } else {
-            // We just log intermediate statuses now instead of updating UI
-            logMsg("Protocol status: %s", status.c_str());
         }
+        // No logging for intermediate statuses to reduce spam
     });
     
     logMsg("Disconnecting");
@@ -293,11 +284,8 @@ void* connectionThreadFunc(void* arg) {
 
 void startCalibreConnection() {
     if (isConnecting) {
-        logMsg("Connection already in progress");
         return;
     }
-    
-    logMsg("Starting Calibre connection thread");
     
     isConnecting = true;
     shouldStop = false;
@@ -323,7 +311,7 @@ void startCalibreConnection() {
     }
     
     if (pthread_create(&connectionThread, NULL, connectionThreadFunc, NULL) != 0) {
-        logMsg("Failed to create connection thread");
+        logMsg("Failed to create thread");
         isConnecting = false;
         return;
     }
@@ -332,55 +320,43 @@ void startCalibreConnection() {
 // Primary entry point for connection logic.
 void startConnection() {
     if (isConnecting) {
-        logMsg("Connection logic already running");
         return;
     }
     
-    logMsg("Ensuring WiFi connection...");
-
     // 1. Check if we are already connected
     iv_netinfo* netInfo = NetInfo();
     if (netInfo && netInfo->connected) {
-        logMsg("WiFi already connected to: %s", netInfo->name);
         startCalibreConnection();
         return;
     }
 
     // 2. Not connected? Use standard SDK dialog to connect.
-    Message(ICON_INFORMATION, "WiFi", "Connecting to WiFi...", 1000);
+    // REMOVED: Intermediate "Connecting to WiFi..." toast
     
     // NetConnect(NULL) calls the native system dialog.
     int netResult = NetConnect(NULL);
 
     if (netResult == NET_OK) {
-        netInfo = NetInfo();
-        logMsg("WiFi connected successfully to: %s", netInfo ? netInfo->name : "Unknown");
         startCalibreConnection();
     } else {
-        logMsg("WiFi connection failed or cancelled. Result: %d", netResult);
-        
-        const char* errorMsg = "Could not connect to WiFi network.";
-        notifyConnectionFailed(errorMsg);
+        logMsg("WiFi connection failed: %d", netResult);
+        notifyConnectionFailed("Could not connect to WiFi network.");
     }
 }
 
 // Timer callback to delay connection start until UI is drawn
 void connectionTimerFunc() {
-    logMsg("Timer fired: starting connection sequence");
-    // Ensure timer is cleared
     ClearTimer((iv_timerproc)connectionTimerFunc);
     startConnection();
 }
 
 void stopConnection() {
-    logMsg("Stopping connection...");
     shouldStop = true;
     
     if (protocol) protocol->disconnect();
     if (networkManager) networkManager->disconnect();
 
     if (isConnecting) {
-        logMsg("Connection thread is running, detaching for fast exit");
         pthread_detach(connectionThread);
         isConnecting = false;
     }
@@ -413,29 +389,21 @@ void saveAndCloseConfig() {
 }
 
 void configSaveHandler() {
-    logMsg("Config save handler called");
     if (appConfig) SaveConfig(appConfig);
 }
 
 void configItemChangedHandler(char *name) {
-    logMsg("Config item changed: %s", name ? name : "NULL");
     if (appConfig) SaveConfig(appConfig);
 }
 
 void retryConnectionHandler(int button) {
-    logMsg("Retry dialog closed with button: %d", button);
-    
     if (button == 1) {
-        logMsg("User chose to retry connection");
         SoftUpdate(); 
         startConnection();
-    } else {
-        logMsg("User cancelled retry");
     }
 }
 
 void configCloseHandler() {
-    logMsg("Config editor closed by user");
     performExit();
 }
 
@@ -452,52 +420,31 @@ void showMainScreen() {
 
 void performExit() {
     if (exitRequested) {
-        logMsg("Exit already in progress, ignoring");
         return;
     }
     
     exitRequested = true;
-    logMsg("Performing exit");
     
     // Clear the start timer if we exit immediately
     ClearTimer((iv_timerproc)connectionTimerFunc);
-	
 	ClearTimer((iv_timerproc)finalSyncMessageTimer);
     
     stopConnection();
     
-    logMsg("Closing config editor...");
     CloseConfigLevel();
-    
     saveAndCloseConfig();
     
-    if (protocol) {
-        delete protocol;
-        protocol = NULL;
-    }
-    if (cacheManager) {
-        delete cacheManager;
-        cacheManager = NULL;
-    }
-    if (networkManager) {
-        delete networkManager;
-        networkManager = NULL;
-    }
-    if (bookManager) {
-        delete bookManager;
-        bookManager = NULL;
-    }
+    if (protocol) { delete protocol; protocol = NULL; }
+    if (cacheManager) { delete cacheManager; cacheManager = NULL; }
+    if (networkManager) { delete networkManager; networkManager = NULL; }
+    if (bookManager) { delete bookManager; bookManager = NULL; }
     
-    logMsg("Closing application normally");
     closeLog();
-    
     CloseApp();
 }
 
 void finalSyncMessageTimer() {
     ClearTimer((iv_timerproc)finalSyncMessageTimer);
-
-    logMsg("Timer fired: Batch sync finished");
 
     char msgBuffer[128];
     snprintf(msgBuffer, sizeof(msgBuffer), 
@@ -509,14 +456,11 @@ void finalSyncMessageTimer() {
 }
 
 int mainEventHandler(int type, int par1, int par2) {
-    if (type != EVT_POINTERMOVE && type != 49) {
-        logMsg("Event: %d, p1: %d, p2: %d", type, par1, par2);
-    }
+    // REMOVED: Excessive event logging (logMsg("Event: %d..."))
 
     switch (type) {
         case EVT_INIT:
             initLog();
-            logMsg("EVT_INIT");
             SetPanelType(PANEL_ENABLED);
             initConfig();
             showMainScreen();
@@ -533,21 +477,18 @@ int mainEventHandler(int type, int par1, int par2) {
             break;
         
         case EVT_NET_CONNECTED:
-            logMsg("EVT_NET_CONNECTED received");
             if (!isConnecting && !networkManager->isConnected()) {
                 startCalibreConnection();
             }
             break;
             
         case EVT_NET_DISCONNECTED:
-            logMsg("EVT_NET_DISCONNECTED received");
             if (isConnecting) {
                 stopConnection();
             }
             break;
             
         case EVT_CONNECTION_FAILED:
-            logMsg("Showing connection failed dialog");
             Dialog(ICON_ERROR, 
                    "Connection Failed", 
                    connectionErrorBuffer,
@@ -556,10 +497,8 @@ int mainEventHandler(int type, int par1, int par2) {
             break;
 
         case EVT_SHOW_TOAST:
-            // Handle toast messages for connection status
-            if (par1 == TOAST_CONNECTING) {
-                Message(ICON_INFORMATION, "Calibre", "Connecting to Calibre...", 1500);
-            } else if (par1 == TOAST_CONNECTED) {
+            // Handle toast messages ONLY for Connected/Disconnected
+            if (par1 == TOAST_CONNECTED) {
                 Message(ICON_INFORMATION, "Calibre", "Connected Successfully", 2000);
             } else if (par1 == TOAST_DISCONNECTED) {
                 Message(ICON_INFORMATION, "Calibre", "Disconnected", 2000);
@@ -567,7 +506,6 @@ int mainEventHandler(int type, int par1, int par2) {
             break;
             
         case EVT_SYNC_COMPLETE:
-            logMsg("Showing sync complete message");
             Message(ICON_INFORMATION, "Success", syncCompleteBuffer, 5000);
             break;
             
@@ -577,7 +515,6 @@ int mainEventHandler(int type, int par1, int par2) {
             
         case EVT_KEYPRESS:
             if (par1 == IV_KEY_BACK || par1 == IV_KEY_PREV) {
-                logMsg("Hardware KEY_BACK pressed - Exiting");
                 performExit();
                 return 1;
             }
@@ -595,7 +532,6 @@ int mainEventHandler(int type, int par1, int par2) {
         }
 
         case EVT_EXIT:
-            logMsg("EVT_EXIT received");
             if (!exitRequested) {
                 exitRequested = true;
                 stopConnection();
@@ -616,4 +552,5 @@ int mainEventHandler(int type, int par1, int par2) {
 int main(int argc, char *argv[]) {
     InkViewMain(mainEventHandler);
     return 0;
+}
 }
