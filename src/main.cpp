@@ -228,7 +228,6 @@ static int connectionCompletedCallback(int status) {
         case NET_ENOTCONF:    errorMsg = "Network not configured"; break;
         case NET_EWRONGKEY:   errorMsg = "Wrong WiFi password"; break;
         case NET_EAUTH:       errorMsg = "WiFi authentication failed"; break;
-        case NET_EFLIGHTMODE: errorMsg = "Device in flight mode"; break;
         case NET_ETIMEOUT:    errorMsg = "Connection timeout"; break;
         case NET_EDISABLED:   errorMsg = "WiFi disabled"; break;
         default:              errorMsg = "WiFi connection failed"; break;
