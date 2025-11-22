@@ -10,10 +10,12 @@
 #include <pthread.h>
 #include <unistd.h>
 
+// Custom events
 #define EVT_USER_UPDATE 20001
 #define EVT_CONNECTION_FAILED 20002
 #define EVT_SYNC_COMPLETE 20003
 
+// Debug logging
 static FILE* logFile = NULL;
 
 void initLog() {
@@ -55,9 +57,11 @@ void closeLog() {
     }
 }
 
+// Global config
 static iconfig *appConfig = NULL;
 static const char *CONFIG_FILE = "/mnt/ext1/system/config/calibre-connect.cfg";
 
+// Config keys
 static const char *KEY_IP = "ip";
 static const char *KEY_PORT = "port";
 static const char *KEY_PASSWORD = "password";
@@ -66,11 +70,13 @@ static const char *KEY_READ_DATE_COLUMN = "read_date_column";
 static const char *KEY_FAVORITE_COLUMN = "favorite_column";
 static const char *KEY_CONNECTION = "connection_enabled";
 
+// Global connection status buffer and error message
 static char connectionStatusBuffer[128] = "Disconnected"; 
 static char connectionErrorBuffer[256] = "";
 static char syncCompleteBuffer[256] = "";
 static int booksReceivedCount = 0;
 
+// Default values
 static const char *DEFAULT_IP = "192.168.1.100";
 static const char *DEFAULT_PORT = "9090";
 static const char *DEFAULT_PASSWORD = "";
@@ -78,6 +84,7 @@ static const char *DEFAULT_READ_COLUMN = "#read";
 static const char *DEFAULT_READ_DATE_COLUMN = "#read_date";
 static const char *DEFAULT_FAVORITE_COLUMN = "#favorite";
 
+// Connection state
 static NetworkManager* networkManager = NULL;
 static BookManager* bookManager = NULL;
 static CacheManager* cacheManager = NULL;
@@ -87,11 +94,12 @@ static bool isConnecting = false;
 static bool shouldStop = false;
 static volatile bool exitRequested = false;
 
+// Forward declarations
 int mainEventHandler(int type, int par1, int par2);
 void performExit();
-void delayedConnectionStart();
-void startCalibreConnection();
+void startConnection();
 
+// Config editor structure
 static iconfigedit configItems[] = {
     {
         CFG_INFO,
@@ -183,6 +191,8 @@ void updateConnectionStatus(const char* status) {
     if (appConfig) {
         WriteString(appConfig, KEY_CONNECTION, status);
     }
+    
+    SendEvent(mainEventHandler, EVT_USER_UPDATE, 0, 0);
 }
 
 void notifyConnectionFailed(const char* errorMsg) {
@@ -202,10 +212,10 @@ void notifySyncComplete(int booksReceived) {
 
 void* connectionThreadFunc(void* arg) {
     logMsg("Connection thread started");
-    isConnecting = true;
+    
+    // NOTE: We assume WiFi is already connected here (handled in startConnection)
     
     updateConnectionStatus("Connecting...");
-    SendEvent(mainEventHandler, EVT_USER_UPDATE, 0, 0);
     
     const char* ip = ReadString(appConfig, KEY_IP, DEFAULT_IP);
     int port = ReadInt(appConfig, KEY_PORT, atoi(DEFAULT_PORT));
@@ -224,21 +234,20 @@ void* connectionThreadFunc(void* arg) {
         password = "";
     }
     
-    logMsg("Connecting to %s:%d", ip, port);
+    logMsg("Connecting to Calibre server %s:%d", ip, port);
     
     if (shouldStop) {
         logMsg("Connection cancelled before connect");
         isConnecting = false;
         updateConnectionStatus("Disconnected");
-        SendEvent(mainEventHandler, EVT_USER_UPDATE, 0, 0);
         return NULL;
     }
     
+    // Try to connect to Calibre (TCP)
     if (!networkManager->connectToServer(ip, port)) {
         logMsg("Connection failed");
         isConnecting = false;
         updateConnectionStatus("Disconnected");
-        SendEvent(mainEventHandler, EVT_USER_UPDATE, 0, 0);
         notifyConnectionFailed("Failed to connect to Calibre server.\nPlease check IP address and port.");
         return NULL;
     }
@@ -248,20 +257,17 @@ void* connectionThreadFunc(void* arg) {
         networkManager->disconnect();
         isConnecting = false;
         updateConnectionStatus("Disconnected");
-        SendEvent(mainEventHandler, EVT_USER_UPDATE, 0, 0);
         return NULL;
     }
     
     logMsg("Connected, starting handshake");
     updateConnectionStatus("Handshake...");
-    SendEvent(mainEventHandler, EVT_USER_UPDATE, 0, 0);
     
     if (!protocol->performHandshake(password)) {
         logMsg("Handshake failed: %s", protocol->getErrorMessage().c_str());
         networkManager->disconnect();
         isConnecting = false;
         updateConnectionStatus("Disconnected");
-        SendEvent(mainEventHandler, EVT_USER_UPDATE, 0, 0);
         
         std::string errorMsg = "Handshake failed: ";
         errorMsg += protocol->getErrorMessage();
@@ -271,9 +277,9 @@ void* connectionThreadFunc(void* arg) {
     
     logMsg("Handshake successful");
     updateConnectionStatus("Connected");
-    SendEvent(mainEventHandler, EVT_USER_UPDATE, 0, 0);
     
     protocol->handleMessages([](const std::string& status) {
+        // Callback from protocol
     });
     
     logMsg("Disconnecting");
@@ -284,7 +290,6 @@ void* connectionThreadFunc(void* arg) {
     networkManager->disconnect();
     
     updateConnectionStatus("Disconnected");
-    SendEvent(mainEventHandler, EVT_USER_UPDATE, 0, 0);
     isConnecting = false;
     
     if (booksReceived > 0) {
@@ -294,6 +299,8 @@ void* connectionThreadFunc(void* arg) {
     return NULL;
 }
 
+// Starts the TCP socket thread for Calibre. 
+// Should only be called after WiFi is confirmed connected.
 void startCalibreConnection() {
     if (isConnecting) {
         logMsg("Connection already in progress");
@@ -333,102 +340,46 @@ void startCalibreConnection() {
     }
 }
 
-void delayedConnectionStart() {
-    logMsg("Delayed connection start");
+// Primary entry point for connection logic.
+// Uses native SDK NetConnect(NULL) to ensure WiFi connectivity first.
+void startConnection() {
+    if (isConnecting) {
+        logMsg("Connection logic already running");
+        return;
+    }
     
-    NET_STATE currentState = GetNetState();
-    logMsg("Current NET_STATE: %d (DISCONNECTED=%d, CONNECTING=%d, CONNECTED=%d)", 
-           currentState, DISCONNECTED, CONNECTING, CONNECTED);
-    
-    if (currentState == CONNECTED) {
-        logMsg("WiFi already connected");
-        updateConnectionStatus("WiFi connected");
-        SendEvent(mainEventHandler, EVT_USER_UPDATE, 0, 0);
+    logMsg("Ensuring WiFi connection...");
+    updateConnectionStatus("Checking WiFi...");
+
+    // 1. Check if we are already connected
+    iv_netinfo* netInfo = NetInfo();
+    if (netInfo && netInfo->connected) {
+        logMsg("WiFi already connected to: %s. IP: %s", netInfo->name, netInfo->ip_addr.addr);
         startCalibreConnection();
         return;
     }
-    
-    logMsg("Enabling WiFi module");
-    updateConnectionStatus("Enabling WiFi...");
-    SendEvent(mainEventHandler, EVT_USER_UPDATE, 0, 0);
-    
-    if (WiFiPower(1) != 0) {
-        logMsg("Failed to enable WiFi");
-        updateConnectionStatus("WiFi failed");
-        notifyConnectionFailed("Cannot enable WiFi.\nPlease check device settings.");
-        return;
-    }
-    
-    logMsg("Waiting for WiFi module initialization");
-    int attempts = 0;
-    while (attempts < 10) {
-        usleep(500000);
-        NET_STATE state = GetNetState();
-        logMsg("Init wait attempt %d, state: %d", attempts, state);
-        if (state != DISCONNECTED) break;
-        attempts++;
-    }
-    
-    if (attempts >= 10) {
-        logMsg("WiFi module initialization timeout");
-        updateConnectionStatus("WiFi timeout");
-        notifyConnectionFailed("WiFi module initialization timeout.\nPlease try again.");
-        return;
-    }
-    
-    logMsg("Attempting WiFi connection");
+
+    // 2. Not connected? Use standard SDK dialog to connect.
+    // NetConnect(NULL) is the native way:
+    // - It handles hardware power on.
+    // - It connects to known networks automatically.
+    // - It opens the selection dialog if no network is found.
+    // - It blocks execution until connected or cancelled.
     updateConnectionStatus("Connecting to WiFi...");
-    SendEvent(mainEventHandler, EVT_USER_UPDATE, 0, 0);
-    
-    int connectResult = NetConnect(NULL);
-    logMsg("NetConnect result: %d (NET_OK=%d)", connectResult, NET_OK);
-    
-    if (connectResult == NET_OK || connectResult == NET_CONNECT) {
-        logMsg("Waiting for WiFi connection");
-        attempts = 0;
-        while (attempts < 20) {
-            usleep(500000);
-            NET_STATE state = GetNetState();
-            
-            if (attempts % 4 == 0) {
-                char statusBuf[64];
-                snprintf(statusBuf, sizeof(statusBuf), "Connecting to WiFi... %ds", attempts / 2);
-                updateConnectionStatus(statusBuf);
-                SendEvent(mainEventHandler, EVT_USER_UPDATE, 0, 0);
-            }
-            
-            logMsg("Connection wait attempt %d, state: %d", attempts, state);
-            
-            if (state == CONNECTED) {
-                logMsg("WiFi connected successfully!");
-                updateConnectionStatus("WiFi connected");
-                SendEvent(mainEventHandler, EVT_USER_UPDATE, 0, 0);
-                startCalibreConnection();
-                return;
-            }
-            
-            attempts++;
-        }
-        
-        logMsg("WiFi connection timeout");
-        updateConnectionStatus("Connection timeout");
-        notifyConnectionFailed("Failed to connect to WiFi.\nConnection timeout.");
+    int netResult = NetConnect(NULL);
+
+    if (netResult == NET_OK) {
+        // Refresh info to log success
+        netInfo = NetInfo();
+        logMsg("WiFi connected successfully to: %s", netInfo ? netInfo->name : "Unknown");
+        startCalibreConnection();
     } else {
-        logMsg("NetConnect failed with code: %d", connectResult);
-        updateConnectionStatus("WiFi failed");
+        logMsg("WiFi connection failed or cancelled. Result: %d", netResult);
+        updateConnectionStatus("WiFi Failed");
         
-        const char* errorMsg = NULL;
-        switch (connectResult) {
-            case NET_FAIL:       errorMsg = "Network connection failed"; break;
-            case NET_ENOTCONF:   errorMsg = "No WiFi network configured.\nPlease configure WiFi in device settings."; break;
-            case NET_EWRONGKEY:  errorMsg = "Wrong WiFi password"; break;
-            case NET_EAUTH:      errorMsg = "WiFi authentication failed"; break;
-            case NET_ETIMEOUT:   errorMsg = "Connection timeout"; break;
-            case NET_EDISABLED:  errorMsg = "WiFi disabled"; break;
-            case NET_ABORTED:    errorMsg = "Connection cancelled by user"; break;
-            default:             errorMsg = "WiFi connection failed"; break;
-        }
-        
+        const char* errorMsg = "Could not connect to WiFi network.";
+        // Optional: decode specific SDK errors if needed, 
+        // but usually the system dialog has already informed the user.
         notifyConnectionFailed(errorMsg);
     }
 }
@@ -497,7 +448,9 @@ void retryConnectionHandler(int button) {
     
     if (button == 1) {
         logMsg("User chose to retry connection");
-        delayedConnectionStart();
+        // Use SoftUpdate to clear the dialog before blocking on NetConnect
+        SoftUpdate(); 
+        startConnection();
     } else {
         logMsg("User cancelled retry");
     }
@@ -527,8 +480,6 @@ void performExit() {
     
     exitRequested = true;
     logMsg("Performing exit");
-    
-    ClearTimerByName("connect_timer");
     
     stopConnection();
     
@@ -572,11 +523,31 @@ int mainEventHandler(int type, int par1, int par2) {
             SetPanelType(PANEL_ENABLED);
             initConfig();
             showMainScreen();
+            // Start connection process immediately after UI init
+            startConnection();
             break;
             
         case EVT_USER_UPDATE:
-            logMsg("EVT_USER_UPDATE - refreshing config editor");
-            UpdateCurrentConfigPage();
+            // Only update UI, logic is handled in threads or initial connection
+            PartialUpdate(0, 0, ScreenWidth(), ScreenHeight());
+            break;
+        
+        // EVT_NET_CONNECTED usually fires when NetConnect succeeds, 
+        // but since we use blocking NetConnect(NULL), we handle success there.
+        // However, if the user connects externally (e.g. via status bar), we catch it here.
+        case EVT_NET_CONNECTED:
+            logMsg("EVT_NET_CONNECTED received");
+            if (!isConnecting && !networkManager->isConnected()) {
+                startCalibreConnection();
+            }
+            break;
+            
+        case EVT_NET_DISCONNECTED:
+            logMsg("EVT_NET_DISCONNECTED received");
+            if (isConnecting) {
+                stopConnection();
+                updateConnectionStatus("WiFi disconnected");
+            }
             break;
             
         case EVT_CONNECTION_FAILED:
@@ -594,9 +565,7 @@ int mainEventHandler(int type, int par1, int par2) {
             break;
             
         case EVT_SHOW:
-            logMsg("EVT_SHOW - starting delayed connection");
             SoftUpdate();
-            SetWeakTimer("connect_timer", delayedConnectionStart, 500);
             break;
             
         case EVT_KEYPRESS:
@@ -613,24 +582,11 @@ int mainEventHandler(int type, int par1, int par2) {
                 exitRequested = true;
                 stopConnection();
                 saveAndCloseConfig();
-                
-                if (protocol) {
-                    delete protocol;
-                    protocol = NULL;
-                }
-                if (cacheManager) {
-                    delete cacheManager;
-                    cacheManager = NULL;
-                }
-                if (networkManager) {
-                    delete networkManager;
-                    networkManager = NULL;
-                }
-                if (bookManager) {
-                    delete bookManager;
-                    bookManager = NULL;
-                }
-                
+                // Cleanup objects
+                if (protocol) { delete protocol; protocol = NULL; }
+                if (cacheManager) { delete cacheManager; cacheManager = NULL; }
+                if (networkManager) { delete networkManager; networkManager = NULL; }
+                if (bookManager) { delete bookManager; bookManager = NULL; }
                 closeLog();
             }
             return 1;
@@ -641,6 +597,5 @@ int mainEventHandler(int type, int par1, int par2) {
 
 int main(int argc, char *argv[]) {
     InkViewMain(mainEventHandler);
-    logMsg("After InkViewMain - this should not happen");
     return 0;
 }
