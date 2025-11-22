@@ -354,17 +354,13 @@ void startConnection() {
     // 1. Check if we are already connected
     iv_netinfo* netInfo = NetInfo();
     if (netInfo && netInfo->connected) {
-        logMsg("WiFi already connected to: %s. IP: %s", netInfo->name, netInfo->ip_addr.addr);
+        // FIXED: Removed access to netInfo->ip_addr.addr as it does not exist in iv_netinfo
+        logMsg("WiFi already connected to: %s", netInfo->name);
         startCalibreConnection();
         return;
     }
 
     // 2. Not connected? Use standard SDK dialog to connect.
-    // NetConnect(NULL) is the native way:
-    // - It handles hardware power on.
-    // - It connects to known networks automatically.
-    // - It opens the selection dialog if no network is found.
-    // - It blocks execution until connected or cancelled.
     updateConnectionStatus("Connecting to WiFi...");
     int netResult = NetConnect(NULL);
 
@@ -378,8 +374,6 @@ void startConnection() {
         updateConnectionStatus("WiFi Failed");
         
         const char* errorMsg = "Could not connect to WiFi network.";
-        // Optional: decode specific SDK errors if needed, 
-        // but usually the system dialog has already informed the user.
         notifyConnectionFailed(errorMsg);
     }
 }
