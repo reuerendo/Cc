@@ -1,7 +1,3 @@
-{
-type: uploaded file
-fileName: main.cpp
-fullContent:
 #include "inkview.h"
 #include "network.h"
 #include "calibre_protocol.h"
