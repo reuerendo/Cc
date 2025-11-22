@@ -14,6 +14,7 @@
 #define EVT_USER_UPDATE 20001
 #define EVT_CONNECTION_FAILED 20002
 #define EVT_SYNC_COMPLETE 20003
+#define EVT_BOOK_RECEIVED 20004
 
 // Debug logging
 static FILE* logFile = NULL;
