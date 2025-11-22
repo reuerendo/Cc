@@ -210,34 +210,6 @@ void notifySyncComplete(int booksReceived) {
     SendEvent(mainEventHandler, EVT_SYNC_COMPLETE, 0, 0);
 }
 
-// Async connection callback for NetConnectAsync
-static int connectionCompletedCallback(int status) {
-    logMsg("NetConnectAsync callback: status=%d (NET_OK=%d)", status, NET_OK);
-    
-    if (status == NET_OK) {
-        logMsg("WiFi connected successfully, starting Calibre connection");
-        SendEvent(mainEventHandler, EVT_USER_UPDATE, 0, 0);
-        return 0;
-    }
-    
-    logMsg("WiFi connection failed with status: %d", status);
-    
-    const char* errorMsg = NULL;
-    switch (status) {
-        case NET_FAIL:        errorMsg = "Network connection failed"; break;
-        case NET_ENOTCONF:    errorMsg = "Network not configured"; break;
-        case NET_EWRONGKEY:   errorMsg = "Wrong WiFi password"; break;
-        case NET_EAUTH:       errorMsg = "WiFi authentication failed"; break;
-        case NET_ETIMEOUT:    errorMsg = "Connection timeout"; break;
-        case NET_EDISABLED:   errorMsg = "WiFi disabled"; break;
-        default:              errorMsg = "WiFi connection failed"; break;
-    }
-    
-    updateConnectionStatus("WiFi failed");
-    notifyConnectionFailed(errorMsg);
-    
-    return 0;
-}
 
 void* connectionThreadFunc(void* arg) {
     logMsg("Connection thread started");
@@ -373,40 +345,55 @@ void startConnection() {
     
     logMsg("Starting connection sequence");
     
-    // Check if WiFi is already connected
+    // Check current network status
+    int netStatus = QueryNetwork();
+    logMsg("QueryNetwork() = 0x%X (WIFIREADY=0x%X, CONNECTED=0x%X)", 
+           netStatus, NET_WIFIREADY, NET_CONNECTED);
+    
+    // Check if already connected to WiFi
     iv_netinfo* netInfo = NetInfo();
-    if (netInfo && netInfo->connected) {
+    if (netInfo && (netStatus & NET_CONNECTED)) {
         logMsg("WiFi already connected to: %s", netInfo->name);
         startCalibreConnection();
         return;
     }
     
-    // Check if WiFi hardware is ready
-    int netStatus = QueryNetwork();
-    logMsg("QueryNetwork() = 0x%X", netStatus);
-    
+    // Check if WiFi hardware is off
     if (!(netStatus & NET_WIFIREADY)) {
-        logMsg("WiFi hardware not ready, enabling WiFi");
-        updateConnectionStatus("Enabling WiFi...");
-        
-        int result = WiFiPower(1);
-        logMsg("WiFiPower(1) result: %d", result);
-        
-        // Wait a moment for hardware to initialize
-        usleep(500000); // 500ms
+        logMsg("WiFi hardware is off, need to enable it");
+        updateConnectionStatus("WiFi is off");
+        notifyConnectionFailed("Please enable WiFi in device settings\nand try again.");
+        return;
     }
     
-    // Start async WiFi connection
-    logMsg("Starting async WiFi connection");
+    // WiFi is on but not connected - try to connect
+    logMsg("WiFi hardware ready but not connected, attempting connection");
     updateConnectionStatus("Connecting to WiFi...");
     
-    int result = NetConnectAsync(connectionCompletedCallback);
-    logMsg("NetConnectAsync result: %d", result);
+    // Use synchronous NetConnect with showHourglass=1 to show system WiFi dialog
+    int result = NetConnect2(NULL, 1);
+    logMsg("NetConnect2 result: %d (NET_OK=%d)", result, NET_OK);
     
-    if (result != NET_OK && result != NET_CONNECT) {
-        logMsg("NetConnectAsync failed immediately: %d", result);
+    if (result == NET_OK) {
+        logMsg("WiFi connected successfully");
+        startCalibreConnection();
+    } else {
+        logMsg("WiFi connection failed: %d", result);
         updateConnectionStatus("WiFi failed");
-        notifyConnectionFailed("Failed to start WiFi connection.\nPlease check device settings.");
+        
+        const char* errorMsg = NULL;
+        switch (result) {
+            case NET_FAIL:       errorMsg = "Network connection failed"; break;
+            case NET_ENOTCONF:   errorMsg = "No WiFi network configured.\nPlease configure WiFi in device settings."; break;
+            case NET_EWRONGKEY:  errorMsg = "Wrong WiFi password"; break;
+            case NET_EAUTH:      errorMsg = "WiFi authentication failed"; break;
+            case NET_ETIMEOUT:   errorMsg = "Connection timeout"; break;
+            case NET_EDISABLED:  errorMsg = "WiFi disabled"; break;
+            case NET_ABORTED:    errorMsg = "Connection cancelled by user"; break;
+            default:             errorMsg = "WiFi connection failed"; break;
+        }
+        
+        notifyConnectionFailed(errorMsg);
     }
 }
 
@@ -551,30 +538,7 @@ int mainEventHandler(int type, int par1, int par2) {
             break;
             
         case EVT_USER_UPDATE:
-            // Check if WiFi is now connected and we should start Calibre connection
-            {
-                iv_netinfo* netInfo = NetInfo();
-                if (netInfo && netInfo->connected && !isConnecting) {
-                    logMsg("WiFi connected in update event, starting Calibre connection");
-                    startCalibreConnection();
-                }
-            }
             PartialUpdate(0, 0, ScreenWidth(), ScreenHeight());
-            break;
-            
-        case EVT_NET_CONNECTED:
-            logMsg("EVT_NET_CONNECTED received");
-            if (!isConnecting) {
-                startCalibreConnection();
-            }
-            break;
-            
-        case EVT_NET_DISCONNECTED:
-            logMsg("EVT_NET_DISCONNECTED received");
-            if (isConnecting) {
-                stopConnection();
-                updateConnectionStatus("WiFi disconnected");
-            }
             break;
             
         case EVT_CONNECTION_FAILED:
