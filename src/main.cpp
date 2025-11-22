@@ -105,7 +105,7 @@ static iconfigedit configItems[] = {
     {
         CFG_INFO,
         NULL,
-        (char*)"	Connection",
+        (char*)"    Connection",
         NULL,
         (char*)KEY_CONNECTION,
         connectionStatusBuffer, 
@@ -126,7 +126,7 @@ static iconfigedit configItems[] = {
     {
         CFG_NUMBER,
         NULL,
-        (char *)"  Port",
+        (char *)"   Port",
         NULL,
         (char *)KEY_PORT,
         (char *)DEFAULT_PORT,
@@ -136,7 +136,7 @@ static iconfigedit configItems[] = {
     {
         CFG_PASSWORD,
         NULL,
-        (char *)"Password",
+        (char *)"    Password",
         NULL,
         (char *)KEY_PASSWORD,
         (char *)DEFAULT_PASSWORD,
@@ -146,7 +146,7 @@ static iconfigedit configItems[] = {
     {
         CFG_TEXT,
         NULL,
-        (char *)"Read Status Column",
+        (char *)"    Read Status Column",
         NULL,
         (char *)KEY_READ_COLUMN,
         (char *)DEFAULT_READ_COLUMN,
@@ -156,7 +156,7 @@ static iconfigedit configItems[] = {
     {
         CFG_TEXT,
         NULL,
-        (char *)"Read Date Column",
+        (char *)"    Read Date Column",
         NULL,
         (char *)KEY_READ_DATE_COLUMN,
         (char *)DEFAULT_READ_DATE_COLUMN,
@@ -166,7 +166,7 @@ static iconfigedit configItems[] = {
     {
         CFG_TEXT,
         NULL,
-        (char *)"Favorite Column",
+        (char *)"    Favorite Column",
         NULL,
         (char *)KEY_FAVORITE_COLUMN,
         (char *)DEFAULT_FAVORITE_COLUMN,
@@ -490,6 +490,8 @@ void performExit() {
     
     // Clear the start timer if we exit immediately
     ClearTimer((iv_timerproc)connectionTimerFunc);
+	
+	ClearTimer((iv_timerproc)finalSyncMessageTimer);
     
     stopConnection();
     
@@ -519,6 +521,22 @@ void performExit() {
     closeLog();
     
     CloseApp();
+}
+
+void finalSyncMessageTimer() {
+    ClearTimer((iv_timerproc)finalSyncMessageTimer);
+
+    logMsg("Timer fired: Batch sync finished");
+
+    char msgBuffer[128];
+    snprintf(msgBuffer, sizeof(msgBuffer), 
+             "Batch sync finished.\nTotal received: %d book%s.", 
+             booksReceivedCount, booksReceivedCount == 1 ? "" : "s");
+             
+    Message(ICON_INFORMATION, "Sync Complete", msgBuffer, 4000);
+    
+    updateConnectionStatus("Connected (Idle)");
+    SoftUpdate();
 }
 
 int mainEventHandler(int type, int par1, int par2) {
@@ -586,19 +604,22 @@ int mainEventHandler(int type, int par1, int par2) {
             }
             break;
 			
-		case EVT_BOOK_RECEIVED:
+		case EVT_BOOK_RECEIVED: 
         {
             int count = par1;
+            
+            booksReceivedCount = count;
+
             char statusBuffer[64];
-            snprintf(statusBuffer, sizeof(statusBuffer), "Received %d book%s", 
+            snprintf(statusBuffer, sizeof(statusBuffer), "Receiving... (%d book%s)", 
                      count, count == 1 ? "" : "s");
             updateConnectionStatus(statusBuffer);
-            
-            char msgBuffer[128];
-            snprintf(msgBuffer, sizeof(msgBuffer), "Book #%d saved successfully!", count);
-            Message(ICON_INFORMATION, "Sync Progress", msgBuffer, 2000);
-            
             SoftUpdate();
+
+            ClearTimer((iv_timerproc)finalSyncMessageTimer);
+
+            SetWeakTimer("SyncFinalize", (iv_timerproc)finalSyncMessageTimer, 1000);
+            
             break;
         }
 
