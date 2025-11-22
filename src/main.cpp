@@ -104,7 +104,7 @@ static iconfigedit configItems[] = {
     {
         CFG_INFO,
         NULL,
-        (char*)"Connection",
+        (char*)"	Connection",
         NULL,
         (char*)KEY_CONNECTION,
         connectionStatusBuffer, 
@@ -115,7 +115,7 @@ static iconfigedit configItems[] = {
     {
         CFG_IPADDR,
         NULL,
-        (char *)"IP Address",
+        (char *)"    IP Address",
         NULL,
         (char *)KEY_IP,
         (char *)DEFAULT_IP,
@@ -125,7 +125,7 @@ static iconfigedit configItems[] = {
     {
         CFG_NUMBER,
         NULL,
-        (char *)"Port",
+        (char *)"  Port",
         NULL,
         (char *)KEY_PORT,
         (char *)DEFAULT_PORT,
@@ -284,7 +284,12 @@ void* connectionThreadFunc(void* arg) {
     updateConnectionStatus("Connected");
     
     protocol->handleMessages([](const std::string& status) {
-        // Callback from protocol
+        if (status == "BOOK_SAVED") {
+            int count = protocol->getBooksReceivedCount();
+            SendEvent(mainEventHandler, EVT_BOOK_RECEIVED, count, 0);
+        } else {
+            updateConnectionStatus(status.c_str());
+        }
     });
     
     logMsg("Disconnecting");
@@ -579,6 +584,22 @@ int mainEventHandler(int type, int par1, int par2) {
                 return 1;
             }
             break;
+			
+		case EVT_BOOK_RECEIVED:
+        {
+            int count = par1;
+            char statusBuffer[64];
+            snprintf(statusBuffer, sizeof(statusBuffer), "Received %d book%s", 
+                     count, count == 1 ? "" : "s");
+            updateConnectionStatus(statusBuffer);
+            
+            char msgBuffer[128];
+            snprintf(msgBuffer, sizeof(msgBuffer), "Book #%d saved successfully!", count);
+            Message(ICON_INFORMATION, "Sync Progress", msgBuffer, 2000);
+            
+            SoftUpdate();
+            break;
+        }
 
         case EVT_EXIT:
             logMsg("EVT_EXIT received");

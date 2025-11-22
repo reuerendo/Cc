@@ -338,7 +338,7 @@ void CalibreProtocol::handleMessages(std::function<void(const std::string&)> sta
                 
             case SEND_BOOK:
                 handleSendBook(args);
-                statusCallback("Receiving book");
+                statusCallback("BOOK_SAVED");
                 break;
                 
             case SEND_BOOK_METADATA:
