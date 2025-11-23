@@ -665,3 +665,35 @@ void BookManager::updateCollections(const std::map<std::string, std::vector<std:
     sqlite3_exec(db, "COMMIT", NULL, NULL, NULL);
     closeDB(db);
 }
+
+int BookManager::findBookIdByPath(sqlite3* db, const std::string& lpath) {
+    std::string fullPath = getBookFilePath(lpath);
+    std::string folderName, fileName;
+    
+    size_t lastSlash = fullPath.find_last_of('/');
+    if (lastSlash == std::string::npos) {
+        folderName = "";
+        fileName = fullPath;
+    } else {
+        folderName = fullPath.substr(0, lastSlash);
+        fileName = fullPath.substr(lastSlash + 1);
+    }
+    
+    const char* sql = 
+        "SELECT f.book_id FROM files f "
+        "JOIN folders fo ON f.folder_id = fo.id "
+        "WHERE f.filename = ? AND fo.name = ?";
+        
+    sqlite3_stmt* stmt;
+    int bookId = -1;
+    
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_text(stmt, 1, fileName.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, folderName.c_str(), -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            bookId = sqlite3_column_int(stmt, 0);
+        }
+        sqlite3_finalize(stmt);
+    }
+    return bookId;
+}

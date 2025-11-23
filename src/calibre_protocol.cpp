@@ -534,24 +534,177 @@ static std::string cleanCollectionName(const std::string& rawName) {
 
 bool CalibreProtocol::handleSendBooklists(json_object* args) {
     json_object* collectionsObj = NULL;
-    if (json_object_object_get_ex(args, "collections", &collectionsObj)) {
-        std::map<std::string, std::vector<std::string>> collections;
+    if (!json_object_object_get_ex(args, "collections", &collectionsObj)) {
+        // No collections to sync
+        return true;
+    }
+    
+    logProto("Starting collection sync");
+    
+    // Step 1: Build a map of Calibre collections with their files
+    std::map<std::string, std::set<std::string>> calibreCollections;
+    
+    json_object_object_foreach(collectionsObj, key, val) {
+        std::string cleanName = cleanCollectionName(key);
         
-        json_object_object_foreach(collectionsObj, key, val) {
-            std::string cleanName = cleanCollectionName(key);
-            
-            std::vector<std::string> lpaths;
-            int arrayLen = json_object_array_length(val);
-            for (int i = 0; i < arrayLen; i++) {
-                json_object* lpathObj = json_object_array_get_idx(val, i);
-                lpaths.push_back(json_object_get_string(lpathObj));
-            }
-            
-            collections[cleanName] = lpaths;
+        std::set<std::string> lpaths;
+        int arrayLen = json_object_array_length(val);
+        for (int i = 0; i < arrayLen; i++) {
+            json_object* lpathObj = json_object_array_get_idx(val, i);
+            lpaths.insert(json_object_get_string(lpathObj));
         }
         
-        bookManager->updateCollections(collections);
+        calibreCollections[cleanName] = lpaths;
+        logProto("Calibre collection '%s' has %d books", cleanName.c_str(), (int)lpaths.size());
     }
+    
+    // Step 2: Get current device collections from database
+    std::map<std::string, std::set<std::string>> deviceCollections;
+    sqlite3* db = bookManager->openDB();
+    if (!db) {
+        logProto("Failed to open DB for collection sync");
+        return false;
+    }
+    
+    // Query all bookshelves and their books
+    const char* sql = 
+        "SELECT bs.name, f.filename, fo.name "
+        "FROM bookshelfs bs "
+        "JOIN bookshelfs_books bb ON bs.id = bb.bookshelfid "
+        "JOIN books_impl b ON bb.bookid = b.id "
+        "JOIN files f ON b.id = f.book_id "
+        "JOIN folders fo ON f.folder_id = fo.id "
+        "WHERE bs.is_deleted = 0 AND bb.is_deleted = 0";
+    
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            const char* shelfName = (const char*)sqlite3_column_text(stmt, 0);
+            const char* fileName = (const char*)sqlite3_column_text(stmt, 1);
+            const char* folderName = (const char*)sqlite3_column_text(stmt, 2);
+            
+            if (shelfName && fileName && folderName) {
+                std::string fullPath = std::string(folderName) + "/" + fileName;
+                
+                // Extract lpath (remove /mnt/ext1/ prefix)
+                std::string lpath = fullPath;
+                if (lpath.find("/mnt/ext1/") == 0) {
+                    lpath = lpath.substr(10); // strlen("/mnt/ext1/")
+                }
+                
+                deviceCollections[shelfName].insert(lpath);
+            }
+        }
+        sqlite3_finalize(stmt);
+    }
+    
+    logProto("Found %d collections on device", (int)deviceCollections.size());
+    
+    // Step 3: Compute changes for each collection
+    sqlite3_exec(db, "BEGIN TRANSACTION", NULL, NULL, NULL);
+    time_t now = time(NULL);
+    
+    // Process collections that exist in Calibre
+    for (const auto& calibreEntry : calibreCollections) {
+        const std::string& collectionName = calibreEntry.first;
+        const std::set<std::string>& calibreFiles = calibreEntry.second;
+        
+        int shelfId = bookManager->getOrCreateBookshelf(db, collectionName);
+        if (shelfId == -1) {
+            logProto("Failed to get/create shelf: %s", collectionName.c_str());
+            continue;
+        }
+        
+        // Check if this collection exists on device
+        auto deviceIt = deviceCollections.find(collectionName);
+        
+        if (deviceIt != deviceCollections.end()) {
+            // Collection exists on both - sync differences
+            const std::set<std::string>& deviceFiles = deviceIt->second;
+            
+            // Find files to add (in Calibre but not on device)
+            std::vector<std::string> toAdd;
+            std::set_difference(calibreFiles.begin(), calibreFiles.end(),
+                              deviceFiles.begin(), deviceFiles.end(),
+                              std::back_inserter(toAdd));
+            
+            // Find files to remove (on device but not in Calibre)
+            std::vector<std::string> toRemove;
+            std::set_difference(deviceFiles.begin(), deviceFiles.end(),
+                              calibreFiles.begin(), calibreFiles.end(),
+                              std::back_inserter(toRemove));
+            
+            logProto("Collection '%s': %d to add, %d to remove", 
+                    collectionName.c_str(), (int)toAdd.size(), (int)toRemove.size());
+            
+            // Add books
+            for (const std::string& lpath : toAdd) {
+                int bookId = bookManager->findBookIdByPath(db, lpath);
+                if (bookId != -1) {
+                    bookManager->linkBookToShelf(db, shelfId, bookId);
+                    logProto("Added book to collection: %s -> %s", lpath.c_str(), collectionName.c_str());
+                }
+            }
+            
+            // Remove books
+            for (const std::string& lpath : toRemove) {
+                int bookId = bookManager->findBookIdByPath(db, lpath);
+                if (bookId != -1) {
+                    // Mark link as deleted
+                    const char* deleteSql = 
+                        "UPDATE bookshelfs_books SET is_deleted = 1, ts = ? "
+                        "WHERE bookshelfid = ? AND bookid = ?";
+                    sqlite3_stmt* deleteStmt;
+                    if (sqlite3_prepare_v2(db, deleteSql, -1, &deleteStmt, nullptr) == SQLITE_OK) {
+                        sqlite3_bind_int64(deleteStmt, 1, now);
+                        sqlite3_bind_int(deleteStmt, 2, shelfId);
+                        sqlite3_bind_int(deleteStmt, 3, bookId);
+                        sqlite3_step(deleteStmt);
+                        sqlite3_finalize(deleteStmt);
+                    }
+                    logProto("Removed book from collection: %s -> %s", lpath.c_str(), collectionName.c_str());
+                }
+            }
+            
+            // Mark as processed
+            deviceCollections.erase(deviceIt);
+            
+        } else {
+            // New collection - add all books
+            logProto("Creating new collection: %s with %d books", 
+                    collectionName.c_str(), (int)calibreFiles.size());
+            
+            for (const std::string& lpath : calibreFiles) {
+                int bookId = bookManager->findBookIdByPath(db, lpath);
+                if (bookId != -1) {
+                    bookManager->linkBookToShelf(db, shelfId, bookId);
+                }
+            }
+        }
+    }
+    
+    // Step 4: Remove collections that exist on device but not in Calibre
+    for (const auto& deviceEntry : deviceCollections) {
+        const std::string& collectionName = deviceEntry.first;
+        
+        logProto("Removing collection no longer in Calibre: %s", collectionName.c_str());
+        
+        const char* deleteSql = "UPDATE bookshelfs SET is_deleted = 1, ts = ? WHERE name = ?";
+        sqlite3_stmt* deleteStmt;
+        if (sqlite3_prepare_v2(db, deleteSql, -1, &deleteStmt, nullptr) == SQLITE_OK) {
+            sqlite3_bind_int64(deleteStmt, 1, now);
+            sqlite3_bind_text(deleteStmt, 2, collectionName.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_step(deleteStmt);
+            sqlite3_finalize(deleteStmt);
+        }
+    }
+    
+    sqlite3_exec(db, "COMMIT", NULL, NULL, NULL);
+    sqlite3_exec(db, "PRAGMA wal_checkpoint(FULL)", NULL, NULL, NULL);
+    
+    bookManager->closeDB(db);
+    
+    logProto("Collection sync completed");
     return true;
 }
 

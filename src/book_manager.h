@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <set>
 #include <sqlite3.h>
 #include <ctime>
 
@@ -11,7 +12,7 @@ struct BookMetadata {
     std::string uuid;
     std::string title;
     std::string authors;
-    std::string authorSort;
+    std::string authorSort; // Поле для сортировки (pb-db.lua)
     std::string lpath;
     std::string series;
     int seriesIndex;
@@ -26,6 +27,7 @@ struct BookMetadata {
     int thumbnailWidth;
     std::string isbn;
     
+    // Sync fields
     bool isRead;
     std::string lastReadDate;
     bool isFavorite;
@@ -43,22 +45,31 @@ public:
     
     bool initialize(const std::string& ignored_path);
     
+    // Полное сохранение (при передаче файла)
     bool addBook(const BookMetadata& metadata);
+    
+    // Обновление существующей книги
     bool updateBook(const BookMetadata& metadata); 
+
+    // "Тихая" синхронизация (только статусы)
     bool updateBookSync(const BookMetadata& metadata); 
+    
     bool deleteBook(const std::string& lpath);
-    void updateCollections(const std::map<std::string, std::vector<std::string>>& collections);
     
     std::vector<BookMetadata> getAllBooks(); 
     int getBookCount();
     std::string getBookFilePath(const std::string& lpath);
+    
+    // Public methods for collection management (used by CalibreProtocol)
+    sqlite3* openDB();
+    void closeDB(sqlite3* db);
+    int getOrCreateBookshelf(sqlite3* db, const std::string& name);
+    int findBookIdByPath(sqlite3* db, const std::string& lpath);
+    void linkBookToShelf(sqlite3* db, int shelfId, int bookId);
 
 private:
     const std::string SYSTEM_DB_PATH = "/mnt/ext1/system/explorer-3/explorer-3.db";
     std::string booksDir;
-    
-    sqlite3* openDB();
-    void closeDB(sqlite3* db);
     
     int getStorageId(const std::string& filename);
     int getCurrentProfileId(sqlite3* db);
@@ -66,10 +77,6 @@ private:
     
     int getOrCreateFolder(sqlite3* db, const std::string& folderPath, int storageId);
     bool processBookSettings(sqlite3* db, int book_id, const BookMetadata& metadata, int profile_id);
-    
-    int getOrCreateBookshelf(sqlite3* db, const std::string& name);
-    int findBookIdByPath(sqlite3* db, const std::string& lpath);
-    void linkBookToShelf(sqlite3* db, int shelfId, int bookId);
 };
 
 #endif // BOOK_MANAGER_H
