@@ -162,6 +162,17 @@ json_object* CalibreProtocol::createDeviceInfo() {
     json_object_object_add(info, "useUuidFileNames", json_object_new_boolean(false));
     json_object_object_add(info, "versionOK", json_object_new_boolean(true));
     
+    // Add sync column names if configured
+    if (!readColumn.empty()) {
+        json_object_object_add(info, "isReadSyncCol", 
+                              json_object_new_string(readColumn.c_str()));
+    }
+    
+    if (!readDateColumn.empty()) {
+        json_object_object_add(info, "isReadDateSyncCol", 
+                              json_object_new_string(readDateColumn.c_str()));
+    }
+    
     return info;
 }
 
@@ -249,10 +260,8 @@ bool CalibreProtocol::performHandshake(const std::string& password) {
         uuid = ReadString(GetGlobalConfig(), "calibre_device_uuid", "");
     }
     
-    // Store device UUID for cache manager
     deviceUuid = uuid;
     
-    // Initialize cache with device UUID
     if (cacheManager) {
         cacheManager->initialize(deviceUuid);
     }
@@ -399,7 +408,6 @@ void CalibreProtocol::disconnect() {
         currentBookFile = nullptr;
     }
     
-    // Save cache on disconnect
     if (cacheManager) {
         cacheManager->saveCache();
     }
@@ -454,19 +462,15 @@ bool CalibreProtocol::handleSetLibraryInfo(json_object* args) {
 }
 
 bool CalibreProtocol::handleGetBookCount(json_object* args) {
-    // 1. Load all books from file system/DB
     sessionBooks = bookManager->getAllBooks();
     int count = sessionBooks.size();
     
-    // 2. Check if Calibre wants to use cache
     bool useCache = false;
     json_object* cacheObj = NULL;
     if (json_object_object_get_ex(args, "willUseCachedMetadata", &cacheObj)) {
         useCache = json_object_get_boolean(cacheObj);
     }
     
-    // 3. IMPORTANT: Patch Session Books with Cached UUIDs
-    // BookManager reads from device FS, so it has no UUIDs. We must fetch them from cache.
     if (cacheManager) {
         int matched = 0;
         for (auto& book : sessionBooks) {
@@ -481,7 +485,6 @@ bool CalibreProtocol::handleGetBookCount(json_object* args) {
     
     logProto("GetBookCount: %d books, useCache=%d", count, useCache);
 
-    // 4. Send response with count
     json_object* response = json_object_new_object();
     json_object_object_add(response, "count", json_object_new_int(count));
     json_object_object_add(response, "willStream", json_object_new_boolean(true));
@@ -493,16 +496,12 @@ bool CalibreProtocol::handleGetBookCount(json_object* args) {
     }
     freeJSON(response);
     
-    // 5. Send book list (one by one)
     for (int i = 0; i < count; i++) {
         json_object* bookJson = NULL;
         
         if (useCache) {
-            // Send only brief info + priKey (index)
-            // Driver will compare this against its own cache.
             bookJson = cachedMetadataToJson(sessionBooks[i], i);
         } else {
-            // Send full metadata
             bookJson = metadataToJson(sessionBooks[i]);
             json_object_object_add(bookJson, "priKey", json_object_new_int(i));
         }
@@ -534,24 +533,86 @@ static std::string cleanCollectionName(const std::string& rawName) {
 
 bool CalibreProtocol::handleSendBooklists(json_object* args) {
     json_object* collectionsObj = NULL;
-    if (json_object_object_get_ex(args, "collections", &collectionsObj)) {
-        std::map<std::string, std::vector<std::string>> collections;
+    if (!json_object_object_get_ex(args, "collections", &collectionsObj)) {
+        return true;
+    }
+    
+    // Build map of Calibre collections
+    std::map<std::string, std::set<std::string>> calibreCollections;
+    
+    json_object_object_foreach(collectionsObj, key, val) {
+        std::string cleanName = cleanCollectionName(key);
+        std::set<std::string> lpaths;
         
-        json_object_object_foreach(collectionsObj, key, val) {
-            std::string cleanName = cleanCollectionName(key);
-            
-            std::vector<std::string> lpaths;
-            int arrayLen = json_object_array_length(val);
-            for (int i = 0; i < arrayLen; i++) {
-                json_object* lpathObj = json_object_array_get_idx(val, i);
-                lpaths.push_back(json_object_get_string(lpathObj));
-            }
-            
-            collections[cleanName] = lpaths;
+        int arrayLen = json_object_array_length(val);
+        for (int i = 0; i < arrayLen; i++) {
+            json_object* lpathObj = json_object_array_get_idx(val, i);
+            lpaths.insert(json_object_get_string(lpathObj));
         }
         
-        bookManager->updateCollections(collections);
+        calibreCollections[cleanName] = lpaths;
     }
+    
+    // Get current device collections
+    auto deviceCollections = bookManager->getCollections();
+    
+    // STEP 1: Process existing device collections
+    for (const auto& deviceColl : deviceCollections) {
+        std::string collName = deviceColl.first;
+        
+        // Skip favorites - handled separately
+        if (collName == "Favorites") {
+            continue;
+        }
+        
+        auto calibreIt = calibreCollections.find(collName);
+        
+        if (calibreIt != calibreCollections.end()) {
+            // Collection exists in both - sync differences
+            const auto& calibreLpaths = calibreIt->second;
+            const auto& deviceLpaths = deviceColl.second;
+            
+            // Remove books no longer in Calibre
+            for (const auto& deviceLpath : deviceLpaths) {
+                if (calibreLpaths.find(deviceLpath) == calibreLpaths.end()) {
+                    logProto("Removing from collection '%s': %s", 
+                            collName.c_str(), deviceLpath.c_str());
+                    bookManager->removeFromCollection(deviceLpath, collName);
+                }
+            }
+            
+            // Add new books from Calibre
+            for (const auto& calibreLpath : calibreLpaths) {
+                if (deviceLpaths.find(calibreLpath) == deviceLpaths.end()) {
+                    logProto("Adding to collection '%s': %s", 
+                            collName.c_str(), calibreLpath.c_str());
+                    bookManager->addToCollection(calibreLpath, collName);
+                }
+            }
+            
+            // Mark as processed
+            calibreCollections.erase(calibreIt);
+        } else {
+            // Collection no longer exists in Calibre - remove it
+            logProto("Removing collection no longer in Calibre: %s", collName.c_str());
+            bookManager->removeCollection(collName);
+        }
+    }
+    
+    // STEP 2: Create new collections from Calibre
+    for (const auto& calibreColl : calibreCollections) {
+        const std::string& collName = calibreColl.first;
+        const auto& lpaths = calibreColl.second;
+        
+        if (collName.empty()) continue;
+        
+        logProto("Creating new collection from Calibre: %s", collName.c_str());
+        
+        for (const auto& lpath : lpaths) {
+            bookManager->addToCollection(lpath, collName);
+        }
+    }
+    
     return true;
 }
 
@@ -621,39 +682,17 @@ BookMetadata CalibreProtocol::jsonToMetadata(json_object* obj) {
     if (json_object_object_get_ex(obj, "size", &val)) metadata.size = json_object_get_int64(val);
     if (json_object_object_get_ex(obj, "last_modified", &val)) metadata.lastModified = safeGetJsonString(val);
 
-    // Priority 1: Explicit sync flag from driver (_is_read_)
-    bool hasExplicitSyncFlag = false;
-    if (json_object_object_get_ex(obj, "_is_read_", &val)) {
-        metadata.isRead = json_object_get_boolean(val);
-        hasExplicitSyncFlag = true;
-    }
-    
-    // Priority 2: Last read date from driver (_last_read_date_)
-    bool hasExplicitReadDate = false;
-    if (json_object_object_get_ex(obj, "_last_read_date_", &val)) {
-        const char* dateStr = json_object_get_string(val);
-        if (dateStr && strlen(dateStr) > 0) {
-            metadata.lastReadDate = dateStr;
-            hasExplicitReadDate = true;
-        }
-    }
-    
-    // Priority 3: User metadata columns (only as fallback)
+    // CRITICAL: Read user_metadata for Calibre values
     json_object* userMeta = NULL;
     if (json_object_object_get_ex(obj, "user_metadata", &userMeta)) {
-        // Only use user_metadata if driver didn't provide explicit sync values
-        if (!hasExplicitSyncFlag && !readColumn.empty()) {
+        if (!readColumn.empty()) {
             metadata.isRead = getUserMetadataBool(userMeta, readColumn);
         }
         
-        if (!hasExplicitReadDate && !readDateColumn.empty()) {
-            std::string dateStr = getUserMetadataString(userMeta, readDateColumn);
-            if (!dateStr.empty()) {
-                metadata.lastReadDate = dateStr;
-            }
+        if (!readDateColumn.empty()) {
+            metadata.lastReadDate = getUserMetadataString(userMeta, readDateColumn);
         }
         
-        // Favorite status is always from user metadata
         if (!favoriteColumn.empty()) {
             metadata.isFavorite = getUserMetadataBool(userMeta, favoriteColumn);
         }
@@ -770,7 +809,6 @@ bool CalibreProtocol::handleSendBook(json_object* args) {
     
     bookManager->addBook(metadata);
     
-    // Update cache with new book
     if (cacheManager) {
         cacheManager->updateCache(metadata);
     }
@@ -787,28 +825,79 @@ bool CalibreProtocol::handleSendBookMetadata(json_object* args) {
         return sendErrorResponse("Missing metadata");
     }
     
-    BookMetadata metadata = jsonToMetadata(dataObj);
+    // Parse incoming Calibre metadata
+    BookMetadata calibreMetadata = jsonToMetadata(dataObj);
     
-    logProto("Syncing metadata for: %s (Read: %d, Date: %s)", 
-             metadata.title.c_str(), metadata.isRead, metadata.lastReadDate.c_str());
+    // Get current device state
+    BookMetadata deviceMetadata;
+    if (!bookManager->getBookMetadata(calibreMetadata.lpath, deviceMetadata)) {
+        logProto("Warning: Metadata sync for non-existent book: %s", calibreMetadata.lpath.c_str());
+        return true;
+    }
     
-    if (bookManager->updateBookSync(metadata)) {
-        // Update session cache
-        for(auto& b : sessionBooks) {
-            if (b.lpath == metadata.lpath) { 
-                b.isRead = metadata.isRead;
-                b.isFavorite = metadata.isFavorite;
-                b.lastReadDate = metadata.lastReadDate;
-                break;
-            }
+    logProto("Syncing metadata for: %s", calibreMetadata.title.c_str());
+    logProto("  Calibre - Read: %d, Date: %s, Favorite: %d", 
+             calibreMetadata.isRead, calibreMetadata.lastReadDate.c_str(), calibreMetadata.isFavorite);
+    logProto("  Device  - Read: %d, Date: %s, Favorite: %d", 
+             deviceMetadata.isRead, deviceMetadata.lastReadDate.c_str(), deviceMetadata.isFavorite);
+    
+    // CRITICAL: Implement "Calibre wins" sync logic (like Lua wireless.lua:1094-1165)
+    bool needsUpdate = false;
+    
+    // Sync read status
+    if (!readColumn.empty()) {
+        if (calibreMetadata.isRead != deviceMetadata.isRead) {
+            logProto("  -> Updating read status from Calibre: %d -> %d", 
+                    deviceMetadata.isRead, calibreMetadata.isRead);
+            deviceMetadata.isRead = calibreMetadata.isRead;
+            needsUpdate = true;
         }
-        
-        // Update cache manager
-        if (cacheManager) {
-            cacheManager->updateCache(metadata);
+    }
+    
+    // Sync read date
+    if (!readDateColumn.empty()) {
+        if (calibreMetadata.lastReadDate != deviceMetadata.lastReadDate) {
+            logProto("  -> Updating read date from Calibre: %s -> %s", 
+                    deviceMetadata.lastReadDate.c_str(), calibreMetadata.lastReadDate.c_str());
+            deviceMetadata.lastReadDate = calibreMetadata.lastReadDate;
+            needsUpdate = true;
+        }
+    }
+    
+    // Sync favorite status
+    if (!favoriteColumn.empty()) {
+        if (calibreMetadata.isFavorite != deviceMetadata.isFavorite) {
+            logProto("  -> Updating favorite from Calibre: %d -> %d", 
+                    deviceMetadata.isFavorite, calibreMetadata.isFavorite);
+            deviceMetadata.isFavorite = calibreMetadata.isFavorite;
+            needsUpdate = true;
+        }
+    }
+    
+    // Apply updates if needed
+    if (needsUpdate) {
+        if (bookManager->updateBookSync(deviceMetadata)) {
+            logProto("Successfully synced metadata to device");
+            
+            // Update session cache
+            for (auto& b : sessionBooks) {
+                if (b.lpath == deviceMetadata.lpath) {
+                    b.isRead = deviceMetadata.isRead;
+                    b.isFavorite = deviceMetadata.isFavorite;
+                    b.lastReadDate = deviceMetadata.lastReadDate;
+                    break;
+                }
+            }
+            
+            // Update cache manager
+            if (cacheManager) {
+                cacheManager->updateCache(deviceMetadata);
+            }
+        } else {
+            logProto("ERROR: Failed to update device metadata");
         }
     } else {
-        logProto("Warning: Attempted to sync metadata for non-existent book");
+        logProto("  No changes needed");
     }
     
     return true;
@@ -827,7 +916,6 @@ bool CalibreProtocol::handleDeleteBook(json_object* args) {
         
         bookManager->deleteBook(lpath);
         
-        // Remove from cache using lpath
         if (cacheManager) {
             cacheManager->removeFromCache(lpath);
         }
@@ -1003,7 +1091,6 @@ json_object* CalibreProtocol::cachedMetadataToJson(const BookMetadata& metadata,
     }
     json_object_object_add(obj, "extension", json_object_new_string(ext.c_str()));
     
-    // Add sync status for cached entries
     json_object_object_add(obj, "_is_read_", json_object_new_boolean(metadata.isRead));
     
     if (!metadata.lastReadDate.empty()) {
