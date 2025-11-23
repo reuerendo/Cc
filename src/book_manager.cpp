@@ -283,9 +283,6 @@ bool BookManager::addBook(const BookMetadata& metadata) {
     std::string firstTitleLetter = getFirstLetter(metadata.title);
 
     if (fileId != -1) {
-        // Book already exists - update it
-        LOG_MSG("Updating existing book: %s", metadata.title.c_str());
-        
         const char* updateFileSql = "UPDATE files SET size = ?, modification_time = ? WHERE id = ?";
         if (sqlite3_prepare_v2(db, updateFileSql, -1, &stmt, nullptr) == SQLITE_OK) {
             sqlite3_bind_int64(stmt, 1, (long long)st.st_size);
@@ -319,9 +316,6 @@ bool BookManager::addBook(const BookMetadata& metadata) {
             sqlite3_finalize(stmt);
         }
     } else {
-        // NEW: New book being added
-        LOG_MSG("Adding new book: %s", metadata.title.c_str());
-        
         const char* insertBookSql = 
             "INSERT INTO books_impl (title, first_title_letter, author, firstauthor, "
             "first_author_letter, series, numinseries, size, isbn, sort_title, creationtime, "
@@ -489,7 +483,7 @@ std::vector<BookMetadata> BookManager::getAllBooks() {
     
     std::string sql = 
         "SELECT b.id, b.title, b.author, b.series, b.numinseries, b.size, b.updated, "
-        "f.filename, fo.name, bs.completed, bs.favorite, bs.completed_ts, f.modification_time "
+        "f.filename, fo.name, bs.completed, bs.favorite, bs.completed_ts "
         "FROM books_impl b "
         "JOIN files f ON b.id = f.book_id "
         "JOIN folders fo ON f.folder_id = fo.id "
@@ -529,7 +523,6 @@ std::vector<BookMetadata> BookManager::getAllBooks() {
                 meta.lpath = fName;
             }
             
-            // Current device state
             meta.isRead = (sqlite3_column_int(stmt, 9) != 0);
             meta.isFavorite = (sqlite3_column_int(stmt, 10) != 0);
             
@@ -538,23 +531,10 @@ std::vector<BookMetadata> BookManager::getAllBooks() {
                 meta.lastReadDate = formatIsoTime(readTs);
             }
             
-            time_t fileModTime = (time_t)sqlite3_column_int64(stmt, 12);
-            if (fileModTime > 0) {
-                meta.lastModified = formatIsoTime(fileModTime);
-                // NEW: Set format mtime to file modification time
-                meta.formatMtime = formatIsoTime(fileModTime);
-            } else {
-                time_t updated = (time_t)sqlite3_column_int64(stmt, 6);
-                meta.lastModified = formatIsoTime(updated);
-                meta.formatMtime = formatIsoTime(updated);
-            }
+            time_t updated = (time_t)sqlite3_column_int64(stmt, 6);
+            meta.lastModified = formatIsoTime(updated);
 
-            meta.uuid = "";
-            
-            meta.originalIsRead = meta.isRead;
-            meta.originalLastReadDate = meta.lastReadDate;
-            meta.originalIsFavorite = meta.isFavorite;
-            meta.hasOriginalValues = false;
+            meta.uuid = ""; 
 
             books.push_back(meta);
         }

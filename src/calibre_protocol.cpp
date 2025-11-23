@@ -145,10 +145,7 @@ json_object* CalibreProtocol::createDeviceInfo() {
     
     json_object_object_add(info, "appName", json_object_new_string("PocketBook Calibre Companion"));
     json_object_object_add(info, "acceptedExtensions", extensions);
-    
-    // NEW: Always use lpaths for cache keys (matches driver's current implementation)
     json_object_object_add(info, "cacheUsesLpaths", json_object_new_boolean(true));
-    
     json_object_object_add(info, "canAcceptLibraryInfo", json_object_new_boolean(true));
     json_object_object_add(info, "canDeleteMultipleBooks", json_object_new_boolean(true));
     json_object_object_add(info, "canReceiveBookBinary", json_object_new_boolean(true));
@@ -252,14 +249,12 @@ bool CalibreProtocol::performHandshake(const std::string& password) {
         uuid = ReadString(GetGlobalConfig(), "calibre_device_uuid", "");
     }
     
+    // Store device UUID for cache manager
     deviceUuid = uuid;
     
     // Initialize cache with device UUID
     if (cacheManager) {
         cacheManager->initialize(deviceUuid);
-        // NEW: Set cache strategy to match driver (always use lpaths)
-        cacheManager->setCacheUsesLpaths(true);
-        logProto("Cache strategy set to: uses_lpaths=true");
     }
     
     json_object_object_add(deviceData, "device_store_uuid", 
@@ -458,6 +453,71 @@ bool CalibreProtocol::handleSetLibraryInfo(json_object* args) {
     return result;
 }
 
+bool CalibreProtocol::handleGetBookCount(json_object* args) {
+    // 1. Load all books from file system/DB
+    sessionBooks = bookManager->getAllBooks();
+    int count = sessionBooks.size();
+    
+    // 2. Check if Calibre wants to use cache
+    bool useCache = false;
+    json_object* cacheObj = NULL;
+    if (json_object_object_get_ex(args, "willUseCachedMetadata", &cacheObj)) {
+        useCache = json_object_get_boolean(cacheObj);
+    }
+    
+    // 3. IMPORTANT: Patch Session Books with Cached UUIDs
+    // BookManager reads from device FS, so it has no UUIDs. We must fetch them from cache.
+    if (cacheManager) {
+        int matched = 0;
+        for (auto& book : sessionBooks) {
+            std::string cachedUuid = cacheManager->getUuidForLpath(book.lpath);
+            if (!cachedUuid.empty()) {
+                book.uuid = cachedUuid;
+                matched++;
+            }
+        }
+        logProto("UUID Patching: %d/%d books matched in cache", matched, count);
+    }
+    
+    logProto("GetBookCount: %d books, useCache=%d", count, useCache);
+
+    // 4. Send response with count
+    json_object* response = json_object_new_object();
+    json_object_object_add(response, "count", json_object_new_int(count));
+    json_object_object_add(response, "willStream", json_object_new_boolean(true));
+    json_object_object_add(response, "willScan", json_object_new_boolean(true));
+    
+    if (!sendOKResponse(response)) {
+        freeJSON(response);
+        return false;
+    }
+    freeJSON(response);
+    
+    // 5. Send book list (one by one)
+    for (int i = 0; i < count; i++) {
+        json_object* bookJson = NULL;
+        
+        if (useCache) {
+            // Send only brief info + priKey (index)
+            // Driver will compare this against its own cache.
+            bookJson = cachedMetadataToJson(sessionBooks[i], i);
+        } else {
+            // Send full metadata
+            bookJson = metadataToJson(sessionBooks[i]);
+            json_object_object_add(bookJson, "priKey", json_object_new_int(i));
+        }
+        
+        std::string bookStr = jsonToString(bookJson);
+        if (!network->sendJSON(OK, bookStr.c_str())) {
+            freeJSON(bookJson);
+            return false;
+        }
+        freeJSON(bookJson);
+    }
+    
+    return true;
+}
+
 static std::string cleanCollectionName(const std::string& rawName) {
     if (rawName.empty() || rawName.back() != ')') {
         return rawName;
@@ -493,6 +553,136 @@ bool CalibreProtocol::handleSendBooklists(json_object* args) {
         bookManager->updateCollections(collections);
     }
     return true;
+}
+
+std::string CalibreProtocol::parseJsonStringOrArray(json_object* val) {
+    if (!val || json_object_get_type(val) == json_type_null) return "";
+    
+    enum json_type type = json_object_get_type(val);
+    
+    if (type == json_type_string) {
+        return safeGetJsonString(val);
+    } 
+    else if (type == json_type_array) {
+        std::string result;
+        int len = json_object_array_length(val);
+        for (int i = 0; i < len; i++) {
+            json_object* item = json_object_array_get_idx(val, i);
+            if (i > 0) result += ", ";
+            const char* str = json_object_get_string(item);
+            if (str) {
+                result += str;
+            }
+        }
+        return result;
+    }
+    
+    return "";
+}
+
+static bool getUserMetadataBool(json_object* userMeta, const std::string& colName) {
+    if (!userMeta || colName.empty()) return false;
+    
+    json_object* colObj = NULL;
+    if (json_object_object_get_ex(userMeta, colName.c_str(), &colObj)) {
+        json_object* valObj = NULL;
+        if (json_object_object_get_ex(colObj, "#value#", &valObj)) {
+            return json_object_get_boolean(valObj);
+        }
+    }
+    return false;
+}
+
+static std::string getUserMetadataString(json_object* userMeta, const std::string& colName) {
+    if (!userMeta || colName.empty()) return "";
+    
+    json_object* colObj = NULL;
+    if (json_object_object_get_ex(userMeta, colName.c_str(), &colObj)) {
+        json_object* valObj = NULL;
+        if (json_object_object_get_ex(colObj, "#value#", &valObj)) {
+            const char* str = json_object_get_string(valObj);
+            return str ? std::string(str) : "";
+        }
+    }
+    return "";
+}
+
+BookMetadata CalibreProtocol::jsonToMetadata(json_object* obj) {
+    BookMetadata metadata;
+    json_object* val = NULL;
+    
+    if (json_object_object_get_ex(obj, "uuid", &val)) metadata.uuid = safeGetJsonString(val);
+    if (json_object_object_get_ex(obj, "title", &val)) metadata.title = safeGetJsonString(val);
+    if (json_object_object_get_ex(obj, "authors", &val)) metadata.authors = parseJsonStringOrArray(val);
+    if (json_object_object_get_ex(obj, "author_sort", &val)) metadata.authorSort = safeGetJsonString(val);
+    if (json_object_object_get_ex(obj, "lpath", &val)) metadata.lpath = safeGetJsonString(val);
+    if (json_object_object_get_ex(obj, "series", &val)) metadata.series = safeGetJsonString(val);
+    if (json_object_object_get_ex(obj, "series_index", &val)) metadata.seriesIndex = json_object_get_int(val);
+    if (json_object_object_get_ex(obj, "size", &val)) metadata.size = json_object_get_int64(val);
+    if (json_object_object_get_ex(obj, "last_modified", &val)) metadata.lastModified = safeGetJsonString(val);
+
+    // Priority 1: Explicit sync flag from driver (_is_read_)
+    bool hasExplicitSyncFlag = false;
+    if (json_object_object_get_ex(obj, "_is_read_", &val)) {
+        metadata.isRead = json_object_get_boolean(val);
+        hasExplicitSyncFlag = true;
+    }
+    
+    // Priority 2: Last read date from driver (_last_read_date_)
+    bool hasExplicitReadDate = false;
+    if (json_object_object_get_ex(obj, "_last_read_date_", &val)) {
+        const char* dateStr = json_object_get_string(val);
+        if (dateStr && strlen(dateStr) > 0) {
+            metadata.lastReadDate = dateStr;
+            hasExplicitReadDate = true;
+        }
+    }
+    
+    // Priority 3: User metadata columns (only as fallback)
+    json_object* userMeta = NULL;
+    if (json_object_object_get_ex(obj, "user_metadata", &userMeta)) {
+        // Only use user_metadata if driver didn't provide explicit sync values
+        if (!hasExplicitSyncFlag && !readColumn.empty()) {
+            metadata.isRead = getUserMetadataBool(userMeta, readColumn);
+        }
+        
+        if (!hasExplicitReadDate && !readDateColumn.empty()) {
+            std::string dateStr = getUserMetadataString(userMeta, readDateColumn);
+            if (!dateStr.empty()) {
+                metadata.lastReadDate = dateStr;
+            }
+        }
+        
+        // Favorite status is always from user metadata
+        if (!favoriteColumn.empty()) {
+            metadata.isFavorite = getUserMetadataBool(userMeta, favoriteColumn);
+        }
+    }
+    
+    return metadata;
+}
+
+json_object* CalibreProtocol::metadataToJson(const BookMetadata& metadata) {
+    json_object* obj = json_object_new_object();
+    
+    json_object_object_add(obj, "uuid", json_object_new_string(metadata.uuid.c_str()));
+    json_object_object_add(obj, "title", json_object_new_string(metadata.title.c_str()));
+    json_object_object_add(obj, "authors", json_object_new_string(metadata.authors.c_str()));
+    json_object_object_add(obj, "lpath", json_object_new_string(metadata.lpath.c_str()));
+    json_object_object_add(obj, "last_modified", json_object_new_string(metadata.lastModified.c_str()));
+    json_object_object_add(obj, "size", json_object_new_int64(metadata.size));
+    
+    if (metadata.isRead) {
+        json_object_object_add(obj, "_is_read_", json_object_new_boolean(true));
+    } else {
+        json_object_object_add(obj, "_is_read_", json_object_new_boolean(false));
+    }
+    
+    if (!metadata.lastReadDate.empty()) {
+        json_object_object_add(obj, "_last_read_date_", json_object_new_string(metadata.lastReadDate.c_str()));
+    }
+    
+    return obj;
 }
 
 bool CalibreProtocol::handleSendBook(json_object* args) {
@@ -578,322 +768,15 @@ bool CalibreProtocol::handleSendBook(json_object* args) {
     iv_fclose(currentBookFile);
     currentBookFile = nullptr;
     
-    // Set format_mtime to current time after receiving file
-    time_t now = time(NULL);
-    metadata.formatMtime = formatIsoTime(now);
-    
-    // NEW: Book is NOT new - it came from Calibre
-    metadata.isNewBook = false;
-    metadata.syncType = 0; // Normal book
-    
     bookManager->addBook(metadata);
     
-    // Update cache with new book including all metadata
+    // Update cache with new book
     if (cacheManager) {
         cacheManager->updateCache(metadata);
     }
     
     booksReceivedInSession++;
-    logProto("Book added to DB and cache with format_mtime.");
-    
-    return true;
-}
-
-std::string CalibreProtocol::parseJsonStringOrArray(json_object* val) {
-    if (!val || json_object_get_type(val) == json_type_null) return "";
-    
-    enum json_type type = json_object_get_type(val);
-    
-    if (type == json_type_string) {
-        return safeGetJsonString(val);
-    } 
-    else if (type == json_type_array) {
-        std::string result;
-        int len = json_object_array_length(val);
-        for (int i = 0; i < len; i++) {
-            json_object* item = json_object_array_get_idx(val, i);
-            if (i > 0) result += ", ";
-            const char* str = json_object_get_string(item);
-            if (str) {
-                result += str;
-            }
-        }
-        return result;
-    }
-    
-    return "";
-}
-
-static bool getUserMetadataBool(json_object* userMeta, const std::string& colName) {
-    if (!userMeta || colName.empty()) return false;
-    
-    json_object* colObj = NULL;
-    if (json_object_object_get_ex(userMeta, colName.c_str(), &colObj)) {
-        json_object* valObj = NULL;
-        if (json_object_object_get_ex(colObj, "#value#", &valObj)) {
-            return json_object_get_boolean(valObj);
-        }
-    }
-    return false;
-}
-
-static std::string getUserMetadataString(json_object* userMeta, const std::string& colName) {
-    if (!userMeta || colName.empty()) return "";
-    
-    json_object* colObj = NULL;
-    if (json_object_object_get_ex(userMeta, colName.c_str(), &colObj)) {
-        json_object* valObj = NULL;
-        if (json_object_object_get_ex(colObj, "#value#", &valObj)) {
-            const char* str = json_object_get_string(valObj);
-            return str ? std::string(str) : "";
-        }
-    }
-    return "";
-}
-
-BookMetadata CalibreProtocol::jsonToMetadata(json_object* obj) {
-    BookMetadata metadata;
-    json_object* val = NULL;
-    
-    if (json_object_object_get_ex(obj, "uuid", &val)) metadata.uuid = safeGetJsonString(val);
-    if (json_object_object_get_ex(obj, "title", &val)) metadata.title = safeGetJsonString(val);
-    if (json_object_object_get_ex(obj, "authors", &val)) metadata.authors = parseJsonStringOrArray(val);
-    if (json_object_object_get_ex(obj, "author_sort", &val)) metadata.authorSort = safeGetJsonString(val);
-    if (json_object_object_get_ex(obj, "lpath", &val)) metadata.lpath = safeGetJsonString(val);
-    if (json_object_object_get_ex(obj, "series", &val)) metadata.series = safeGetJsonString(val);
-    if (json_object_object_get_ex(obj, "series_index", &val)) metadata.seriesIndex = json_object_get_int(val);
-    if (json_object_object_get_ex(obj, "size", &val)) metadata.size = json_object_get_int64(val);
-    if (json_object_object_get_ex(obj, "last_modified", &val)) metadata.lastModified = safeGetJsonString(val);
-
-    // NEW: Parse sync_type from Calibre
-    if (json_object_object_get_ex(obj, "_sync_type_", &val)) {
-        metadata.syncType = json_object_get_int(val);
-    }
-
-    // Priority 1: Explicit sync flag from driver
-    bool hasExplicitSyncFlag = false;
-    if (json_object_object_get_ex(obj, "_is_read_", &val)) {
-        metadata.originalIsRead = json_object_get_boolean(val);
-        metadata.hasOriginalValues = true;
-        hasExplicitSyncFlag = true;
-    }
-    
-    // Priority 2: Last read date from driver
-    bool hasExplicitReadDate = false;
-    if (json_object_object_get_ex(obj, "_last_read_date_", &val)) {
-        const char* dateStr = json_object_get_string(val);
-        if (dateStr && strlen(dateStr) > 0) {
-            metadata.originalLastReadDate = dateStr;
-            hasExplicitReadDate = true;
-        }
-    }
-    
-    // Priority 3: User metadata columns (only as fallback if no explicit values)
-    json_object* userMeta = NULL;
-    if (json_object_object_get_ex(obj, "user_metadata", &userMeta)) {
-        if (!hasExplicitSyncFlag && !readColumn.empty()) {
-            metadata.originalIsRead = getUserMetadataBool(userMeta, readColumn);
-            metadata.hasOriginalValues = true;
-        }
-        
-        if (!hasExplicitReadDate && !readDateColumn.empty()) {
-            std::string dateStr = getUserMetadataString(userMeta, readDateColumn);
-            if (!dateStr.empty()) {
-                metadata.originalLastReadDate = dateStr;
-            }
-        }
-        
-        if (!favoriteColumn.empty()) {
-            metadata.originalIsFavorite = getUserMetadataBool(userMeta, favoriteColumn);
-        }
-    }
-    
-    // Set current device state to match original values initially
-	// Set current device state to match original values initially
-    // This will be overwritten if device has made local changes
-    metadata.isRead = metadata.originalIsRead;
-    metadata.lastReadDate = metadata.originalLastReadDate;
-    metadata.isFavorite = metadata.originalIsFavorite;
-    
-    return metadata;
-}
-
-json_object* CalibreProtocol::metadataToJson(const BookMetadata& metadata) {
-    json_object* obj = json_object_new_object();
-    
-    json_object_object_add(obj, "uuid", json_object_new_string(metadata.uuid.c_str()));
-    json_object_object_add(obj, "title", json_object_new_string(metadata.title.c_str()));
-    json_object_object_add(obj, "authors", json_object_new_string(metadata.authors.c_str()));
-    json_object_object_add(obj, "lpath", json_object_new_string(metadata.lpath.c_str()));
-    json_object_object_add(obj, "last_modified", json_object_new_string(metadata.lastModified.c_str()));
-    json_object_object_add(obj, "size", json_object_new_int64(metadata.size));
-    
-    // Send format mtime
-    if (!metadata.formatMtime.empty()) {
-        json_object_object_add(obj, "_format_mtime_", 
-                              json_object_new_string(metadata.formatMtime.c_str()));
-    }
-    
-    // NEW: Send sync_type
-    if (metadata.syncType != 0) {
-        json_object_object_add(obj, "_sync_type_", json_object_new_int(metadata.syncType));
-    }
-    
-    // NEW: Send _new_book_ flag for device-generated books
-    if (metadata.syncType == 3 || metadata.isNewBook) {
-        json_object_object_add(obj, "_new_book_", json_object_new_boolean(true));
-        logProto("Marking book as new: %s (syncType=%d)", metadata.title.c_str(), metadata.syncType);
-    }
-    
-    // Send CURRENT device state
-    json_object_object_add(obj, "_is_read_", json_object_new_boolean(metadata.isRead));
-    
-    if (!metadata.lastReadDate.empty()) {
-        json_object_object_add(obj, "_last_read_date_", 
-                              json_object_new_string(metadata.lastReadDate.c_str()));
-    }
-    
-    // Send original values using the column names that driver expects
-    if (metadata.hasOriginalValues) {
-        if (!readColumn.empty()) {
-            json_object* userMeta = json_object_new_object();
-            json_object* readCol = json_object_new_object();
-            json_object_object_add(readCol, "#value#", 
-                                  json_object_new_boolean(metadata.originalIsRead));
-            json_object_object_add(userMeta, readColumn.c_str(), readCol);
-            
-            if (!readDateColumn.empty() && !metadata.originalLastReadDate.empty()) {
-                json_object* dateCol = json_object_new_object();
-                json_object_object_add(dateCol, "#value#", 
-                                      json_object_new_string(metadata.originalLastReadDate.c_str()));
-                json_object_object_add(userMeta, readDateColumn.c_str(), dateCol);
-            }
-            
-            if (!favoriteColumn.empty()) {
-                json_object* favCol = json_object_new_object();
-                json_object_object_add(favCol, "#value#", 
-                                      json_object_new_boolean(metadata.originalIsFavorite));
-                json_object_object_add(userMeta, favoriteColumn.c_str(), favCol);
-            }
-            
-            json_object_object_add(obj, "user_metadata", userMeta);
-        }
-    }
-    
-    return obj;
-}
-
-bool CalibreProtocol::handleGetBookCount(json_object* args) {
-    // 1. Load all books from file system/DB
-    sessionBooks = bookManager->getAllBooks();
-    int count = sessionBooks.size();
-    
-    // 2. Check if Calibre wants to use cache
-    bool useCache = false;
-    json_object* cacheObj = NULL;
-    if (json_object_object_get_ex(args, "willUseCachedMetadata", &cacheObj)) {
-        useCache = json_object_get_boolean(cacheObj);
-    }
-    
-    // 3. Check if this is first sync with custom columns
-    bool supportsSync = false;
-    json_object* syncObj = NULL;
-    if (json_object_object_get_ex(args, "supportsSync", &syncObj)) {
-        supportsSync = json_object_get_boolean(syncObj);
-    }
-    
-    // 4. Patch Session Books with Cached data (UUID and sync_type)
-    if (cacheManager) {
-        int matched = 0;
-        for (auto& book : sessionBooks) {
-            BookMetadata cachedMeta;
-            if (cacheManager->getCachedMetadata(book.lpath, cachedMeta)) {
-                // Restore UUID from cache
-                if (!cachedMeta.uuid.empty()) {
-                    book.uuid = cachedMeta.uuid;
-                    matched++;
-                }
-                
-                // NEW: Restore sync_type from cache
-                book.syncType = cachedMeta.syncType;
-                
-                // Restore original values from cache
-                if (cachedMeta.hasOriginalValues) {
-                    book.originalIsRead = cachedMeta.originalIsRead;
-                    book.originalLastReadDate = cachedMeta.originalLastReadDate;
-                    book.originalIsFavorite = cachedMeta.originalIsFavorite;
-                    book.hasOriginalValues = true;
-                }
-            } else {
-                // Book not in cache - generate temporary UUID
-                if (book.uuid.empty()) {
-                    // Generate a deterministic UUID based on lpath
-                    std::string uuidStr = "device_" + book.lpath;
-                    // Simple hash to make it look like UUID
-                    unsigned long hash = 5381;
-                    for (char c : uuidStr) {
-                        hash = ((hash << 5) + hash) + c;
-                    }
-                    char uuidBuf[64];
-                    snprintf(uuidBuf, sizeof(uuidBuf), "temp-%08lx-%04lx-%04lx", 
-                            hash, (hash >> 16) & 0xFFFF, (hash >> 8) & 0xFFFF);
-                    book.uuid = uuidBuf;
-                    book.isNewBook = true;
-                    book.syncType = 3; // Device-generated metadata
-                    logProto("Book not in cache, generated temp UUID: %s -> %s", 
-                            book.title.c_str(), book.uuid.c_str());
-                }
-            }
-        }
-        logProto("UUID Patching: %d/%d books matched in cache", matched, count);
-    }
-    
-    // NEW: Detect first sync with custom columns (sync_type = 2)
-    if (supportsSync && !readColumn.empty()) {
-        for (auto& book : sessionBooks) {
-            // If book has UUID but no original values yet, this is first sync with columns
-            if (!book.uuid.empty() && !book.hasOriginalValues && book.syncType == 0) {
-                book.syncType = 2;
-                logProto("First sync with columns for: %s", book.title.c_str());
-            }
-        }
-    }
-    
-    logProto("GetBookCount: %d books, useCache=%d, supportsSync=%d", 
-             count, useCache, supportsSync);
-
-    // 5. Send response with count
-    json_object* response = json_object_new_object();
-    json_object_object_add(response, "count", json_object_new_int(count));
-    json_object_object_add(response, "willStream", json_object_new_boolean(true));
-    json_object_object_add(response, "willScan", json_object_new_boolean(true));
-    
-    if (!sendOKResponse(response)) {
-        freeJSON(response);
-        return false;
-    }
-    freeJSON(response);
-    
-    // 6. Send book list (one by one)
-    for (int i = 0; i < count; i++) {
-        json_object* bookJson = NULL;
-        
-        if (useCache) {
-            // Send only brief info + priKey (index)
-            bookJson = cachedMetadataToJson(sessionBooks[i], i);
-        } else {
-            // Send full metadata
-            bookJson = metadataToJson(sessionBooks[i]);
-            json_object_object_add(bookJson, "priKey", json_object_new_int(i));
-        }
-        
-        std::string bookStr = jsonToString(bookJson);
-        if (!network->sendJSON(OK, bookStr.c_str())) {
-            freeJSON(bookJson);
-            return false;
-        }
-        freeJSON(bookJson);
-    }
+    logProto("Book added to DB and cache.");
     
     return true;
 }
@@ -906,157 +789,26 @@ bool CalibreProtocol::handleSendBookMetadata(json_object* args) {
     
     BookMetadata metadata = jsonToMetadata(dataObj);
     
-    logProto("Received metadata for: %s (UUID=%s, sync_type=%d, Calibre says Read: %d)", 
-             metadata.title.c_str(), metadata.uuid.c_str(), metadata.syncType, metadata.originalIsRead);
+    logProto("Syncing metadata for: %s (Read: %d, Date: %s)", 
+             metadata.title.c_str(), metadata.isRead, metadata.lastReadDate.c_str());
     
-    // NEW: Handle different sync_type scenarios
-    if (metadata.syncType == 3) {
-        // Device-generated metadata - Calibre is sending us the real UUID
-        logProto("Device-generated metadata, updating with real UUID: %s -> %s", 
-                 metadata.title.c_str(), metadata.uuid.c_str());
-        
-        // Update session books FIRST to merge device state
-        bool found = false;
-        for(auto& sessionBook : sessionBooks) {
-            if (sessionBook.lpath == metadata.lpath) {
-                found = true;
-                
-                // Remove old temp UUID entry from cache if it exists
-                if (cacheManager && sessionBook.uuid.find("temp-") == 0) {
-                    logProto("Removing temp UUID from cache: %s", sessionBook.uuid.c_str());
-                    cacheManager->removeFromCache(metadata.lpath);
-                }
-                
-                // Merge device's current state into metadata for cache
-                metadata.isRead = sessionBook.isRead;
-                metadata.lastReadDate = sessionBook.lastReadDate;
-                metadata.isFavorite = sessionBook.isFavorite;
-                metadata.formatMtime = sessionBook.formatMtime;
-                
-                // Update session book with new UUID from Calibre
-                sessionBook.uuid = metadata.uuid;
-                sessionBook.isNewBook = false;
-                sessionBook.syncType = 0;
-                sessionBook.hasOriginalValues = true;
-                sessionBook.originalIsRead = metadata.originalIsRead;
-                sessionBook.originalLastReadDate = metadata.originalLastReadDate;
-                sessionBook.originalIsFavorite = metadata.originalIsFavorite;
+    if (bookManager->updateBookSync(metadata)) {
+        // Update session cache
+        for(auto& b : sessionBooks) {
+            if (b.lpath == metadata.lpath) { 
+                b.isRead = metadata.isRead;
+                b.isFavorite = metadata.isFavorite;
+                b.lastReadDate = metadata.lastReadDate;
                 break;
             }
         }
         
-        if (!found) {
-            logProto("WARNING: Session book not found for lpath: %s", metadata.lpath.c_str());
-        }
-        
-        // Now update cache with merged metadata (including real UUID)
-        if (cacheManager && !metadata.uuid.empty()) {
-            // Mark as no longer "new" since Calibre now knows about it
-            metadata.isNewBook = false;
-            metadata.syncType = 0; // Reset to normal for future syncs
-            metadata.hasOriginalValues = true;
+        // Update cache manager
+        if (cacheManager) {
             cacheManager->updateCache(metadata);
-            logProto("Cache updated with real UUID: %s (UUID: %s)", 
-                     metadata.title.c_str(), metadata.uuid.c_str());
-        } else {
-            logProto("WARNING: Cannot update cache - empty UUID for: %s", metadata.lpath.c_str());
-        }
-        
-        return true;
-    }
-    
-    if (metadata.syncType == 2) {
-        // First sync with custom columns - special merge logic
-        logProto("First sync with custom columns for: %s", metadata.title.c_str());
-        
-        // Merge with current device state
-        for(auto& sessionBook : sessionBooks) {
-            if (sessionBook.lpath == metadata.lpath) {
-                // Device value wins if it's not None/default
-                if (sessionBook.isRead) {
-                    // Keep device's read status
-                    metadata.isRead = sessionBook.isRead;
-                    metadata.lastReadDate = sessionBook.lastReadDate;
-                    logProto("Device read status wins: Read=%d", sessionBook.isRead);
-                } else if (metadata.originalIsRead) {
-                    // Calibre value wins
-                    metadata.isRead = metadata.originalIsRead;
-                    metadata.lastReadDate = metadata.originalLastReadDate;
-                    logProto("Calibre read status wins: Read=%d", metadata.originalIsRead);
-                }
-                
-                // Update session book
-                sessionBook.uuid = metadata.uuid;
-                sessionBook.originalIsRead = metadata.originalIsRead;
-                sessionBook.originalLastReadDate = metadata.originalLastReadDate;
-                sessionBook.originalIsFavorite = metadata.originalIsFavorite;
-                sessionBook.hasOriginalValues = true;
-                sessionBook.syncType = 0; // Reset to normal after first sync
-                
-                break;
-            }
-        }
-        
-        // Always update DB for first sync
-        bookManager->updateBookSync(metadata);
-        
-        if (cacheManager && !metadata.uuid.empty()) {
-            metadata.syncType = 0; // Store as normal in cache
-            cacheManager->updateCache(metadata);
-        }
-        
-        return true;
-    }
-    
-    // Normal sync (sync_type == 0 or not set)
-    // Merge with current device state before updating
-    for(auto& sessionBook : sessionBooks) {
-        if (sessionBook.lpath == metadata.lpath) {
-            // Keep device's CURRENT state
-            metadata.isRead = sessionBook.isRead;
-            metadata.lastReadDate = sessionBook.lastReadDate;
-            metadata.isFavorite = sessionBook.isFavorite;
-            
-            // Keep existing format_mtime
-            metadata.formatMtime = sessionBook.formatMtime;
-            
-            // Update the session book with new original values
-            sessionBook.uuid = metadata.uuid;
-            sessionBook.originalIsRead = metadata.originalIsRead;
-            sessionBook.originalLastReadDate = metadata.originalLastReadDate;
-            sessionBook.originalIsFavorite = metadata.originalIsFavorite;
-            sessionBook.hasOriginalValues = true;
-            
-            logProto("Merged: Device state Read=%d, Original Read=%d", 
-                     sessionBook.isRead, sessionBook.originalIsRead);
-            break;
-        }
-    }
-    
-    // Only update DB if device state differs from original (local changes made)
-    bool needsDbUpdate = false;
-    if (metadata.hasOriginalValues) {
-        if (metadata.isRead != metadata.originalIsRead ||
-            metadata.lastReadDate != metadata.originalLastReadDate ||
-            metadata.isFavorite != metadata.originalIsFavorite) {
-            
-            logProto("Device has local changes, updating DB");
-            needsDbUpdate = true;
-        } else {
-            logProto("No local changes, only updating cache");
         }
     } else {
-        // First sync, always update
-        needsDbUpdate = true;
-    }
-    
-    if (needsDbUpdate && bookManager->updateBookSync(metadata)) {
-        logProto("DB updated successfully");
-    }
-    
-    // Always update cache with both current and original values
-    if (cacheManager && !metadata.uuid.empty()) {
-        cacheManager->updateCache(metadata);
+        logProto("Warning: Attempted to sync metadata for non-existent book");
     }
     
     return true;
@@ -1238,12 +990,10 @@ json_object* CalibreProtocol::cachedMetadataToJson(const BookMetadata& metadata,
     json_object_object_add(obj, "uuid", json_object_new_string(metadata.uuid.c_str()));
     json_object_object_add(obj, "lpath", json_object_new_string(metadata.lpath.c_str()));
     
-    if (!metadata.lastModified.empty() && 
-        metadata.lastModified != "1970-01-01T00:00:00+00:00") {
-        json_object_object_add(obj, "last_modified", 
-                              json_object_new_string(metadata.lastModified.c_str()));
+    if (!metadata.lastModified.empty()) {
+        json_object_object_add(obj, "last_modified", json_object_new_string(metadata.lastModified.c_str()));
     } else {
-        json_object_object_add(obj, "last_modified", NULL);
+        json_object_object_add(obj, "last_modified", json_object_new_string("1970-01-01T00:00:00+00:00"));
     }
     
     std::string ext = "";

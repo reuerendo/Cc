@@ -51,21 +51,12 @@ public:
     // Clear all cache
     void clearCache();
     
-    // NEW: Set whether cache uses lpaths (true) or uuid+ext (false)
-    void setCacheUsesLpaths(bool useLpaths) { cacheUsesLpaths = useLpaths; }
-    bool getCacheUsesLpaths() const { return cacheUsesLpaths; }
-    
 private:
     std::string deviceUuid;
     std::string cacheFilePath;
-    bool cacheUsesLpaths; // NEW: Match driver's cache key strategy
     
-    // Key: cache key (lpath OR uuid+ext), Value: CacheEntry
+    // Key: lpath (file path relative to root), Value: CacheEntry
     std::map<std::string, CacheEntry> cacheData; 
-    
-    // NEW: Helper to make cache key matching driver's strategy
-    std::string makeCacheKey(const BookMetadata& metadata) const;
-    std::string makeCacheKey(const std::string& uuid, const std::string& lpathOrExt) const;
     
     // Helper to get current ISO timestamp
     std::string getCurrentTimestamp() const;
