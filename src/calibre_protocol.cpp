@@ -495,6 +495,110 @@ bool CalibreProtocol::handleSendBooklists(json_object* args) {
     return true;
 }
 
+bool CalibreProtocol::handleSendBook(json_object* args) {
+    logProto("Starting handleSendBook");
+    
+    json_object* metadataObj = NULL;
+    json_object* lpathObj = NULL;
+    json_object* lengthObj = NULL;
+    
+    if (!json_object_object_get_ex(args, "lpath", &lpathObj) ||
+        !json_object_object_get_ex(args, "length", &lengthObj) ||
+        !json_object_object_get_ex(args, "metadata", &metadataObj)) {
+        return sendErrorResponse("Missing required fields");
+    }
+    
+    currentBookLpath = json_object_get_string(lpathObj);
+    currentBookLength = json_object_get_int64(lengthObj);
+    currentBookReceived = 0;
+    
+    logProto("Receiving book: %s (%lld bytes)", currentBookLpath.c_str(), currentBookLength);
+    
+    BookMetadata metadata = jsonToMetadata(metadataObj);
+    metadata.lpath = currentBookLpath;
+    metadata.size = currentBookLength;
+    
+    std::string filePath = bookManager->getBookFilePath(currentBookLpath);
+    logProto("Target path: %s", filePath.c_str());
+    
+    size_t pos = filePath.rfind('/');
+    if (pos != std::string::npos) {
+        std::string dir = filePath.substr(0, pos);
+        if (recursiveMkdir(dir) != 0) {
+            logProto("Failed to create directory structure for book");
+            return sendErrorResponse("Failed to create directory");
+        }
+    }
+    
+    currentBookFile = iv_fopen(filePath.c_str(), "wb");
+    if (!currentBookFile) {
+        logProto("Failed to open file for writing!");
+        return sendErrorResponse("Failed to create book file");
+    }
+    
+    json_object* response = json_object_new_object();
+    json_object_object_add(response, "lpath", json_object_new_string(currentBookLpath.c_str()));
+    
+    if (!sendOKResponse(response)) {
+        logProto("Failed to send OK response");
+        freeJSON(response);
+        iv_fclose(currentBookFile);
+        currentBookFile = nullptr;
+        return false;
+    }
+    freeJSON(response);
+    
+    const size_t CHUNK_SIZE = 4096;
+    std::vector<char> buffer(CHUNK_SIZE);
+    
+    logProto("Starting binary transfer...");
+    
+    while (currentBookReceived < currentBookLength) {
+        size_t toRead = std::min((size_t)(currentBookLength - currentBookReceived), CHUNK_SIZE);
+        
+        if (!network->receiveBinaryData(buffer.data(), toRead)) {
+            logProto("Network error during file transfer");
+            iv_fclose(currentBookFile);
+            currentBookFile = nullptr;
+            return false;
+        }
+        
+        size_t written = fwrite(buffer.data(), 1, toRead, currentBookFile);
+        if (written != toRead) {
+            logProto("Disk write error");
+            iv_fclose(currentBookFile);
+            currentBookFile = nullptr;
+            return sendErrorResponse("Failed to write book data");
+        }
+        
+        currentBookReceived += toRead;
+    }
+    
+    logProto("Transfer complete.");
+    iv_fclose(currentBookFile);
+    currentBookFile = nullptr;
+    
+    // Set format_mtime to current time after receiving file
+    time_t now = time(NULL);
+    metadata.formatMtime = formatIsoTime(now);
+    
+    // NEW: Book is NOT new - it came from Calibre
+    metadata.isNewBook = false;
+    metadata.syncType = 0; // Normal book
+    
+    bookManager->addBook(metadata);
+    
+    // Update cache with new book including all metadata
+    if (cacheManager) {
+        cacheManager->updateCache(metadata);
+    }
+    
+    booksReceivedInSession++;
+    logProto("Book added to DB and cache with format_mtime.");
+    
+    return true;
+}
+
 std::string CalibreProtocol::parseJsonStringOrArray(json_object* val) {
     if (!val || json_object_get_type(val) == json_type_null) return "";
     
