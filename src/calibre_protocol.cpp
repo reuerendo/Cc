@@ -10,6 +10,7 @@
 #include <sstream>
 #include <iomanip>
 #include <ctime>
+#include <set>
 
 // Helper for logging
 static void logProto(const char* fmt, ...) {
@@ -533,86 +534,24 @@ static std::string cleanCollectionName(const std::string& rawName) {
 
 bool CalibreProtocol::handleSendBooklists(json_object* args) {
     json_object* collectionsObj = NULL;
-    if (!json_object_object_get_ex(args, "collections", &collectionsObj)) {
-        return true;
-    }
-    
-    // Build map of Calibre collections
-    std::map<std::string, std::set<std::string>> calibreCollections;
-    
-    json_object_object_foreach(collectionsObj, key, val) {
-        std::string cleanName = cleanCollectionName(key);
-        std::set<std::string> lpaths;
+    if (json_object_object_get_ex(args, "collections", &collectionsObj)) {
+        std::map<std::string, std::vector<std::string>> collections;
         
-        int arrayLen = json_object_array_length(val);
-        for (int i = 0; i < arrayLen; i++) {
-            json_object* lpathObj = json_object_array_get_idx(val, i);
-            lpaths.insert(json_object_get_string(lpathObj));
-        }
-        
-        calibreCollections[cleanName] = lpaths;
-    }
-    
-    // Get current device collections
-    auto deviceCollections = bookManager->getCollections();
-    
-    // STEP 1: Process existing device collections
-    for (const auto& deviceColl : deviceCollections) {
-        std::string collName = deviceColl.first;
-        
-        // Skip favorites - handled separately
-        if (collName == "Favorites") {
-            continue;
-        }
-        
-        auto calibreIt = calibreCollections.find(collName);
-        
-        if (calibreIt != calibreCollections.end()) {
-            // Collection exists in both - sync differences
-            const auto& calibreLpaths = calibreIt->second;
-            const auto& deviceLpaths = deviceColl.second;
+        json_object_object_foreach(collectionsObj, key, val) {
+            std::string cleanName = cleanCollectionName(key);
             
-            // Remove books no longer in Calibre
-            for (const auto& deviceLpath : deviceLpaths) {
-                if (calibreLpaths.find(deviceLpath) == calibreLpaths.end()) {
-                    logProto("Removing from collection '%s': %s", 
-                            collName.c_str(), deviceLpath.c_str());
-                    bookManager->removeFromCollection(deviceLpath, collName);
-                }
+            std::vector<std::string> lpaths;
+            int arrayLen = json_object_array_length(val);
+            for (int i = 0; i < arrayLen; i++) {
+                json_object* lpathObj = json_object_array_get_idx(val, i);
+                lpaths.push_back(json_object_get_string(lpathObj));
             }
             
-            // Add new books from Calibre
-            for (const auto& calibreLpath : calibreLpaths) {
-                if (deviceLpaths.find(calibreLpath) == deviceLpaths.end()) {
-                    logProto("Adding to collection '%s': %s", 
-                            collName.c_str(), calibreLpath.c_str());
-                    bookManager->addToCollection(calibreLpath, collName);
-                }
-            }
-            
-            // Mark as processed
-            calibreCollections.erase(calibreIt);
-        } else {
-            // Collection no longer exists in Calibre - remove it
-            logProto("Removing collection no longer in Calibre: %s", collName.c_str());
-            bookManager->removeCollection(collName);
+            collections[cleanName] = lpaths;
         }
+        
+        bookManager->updateCollections(collections);
     }
-    
-    // STEP 2: Create new collections from Calibre
-    for (const auto& calibreColl : calibreCollections) {
-        const std::string& collName = calibreColl.first;
-        const auto& lpaths = calibreColl.second;
-        
-        if (collName.empty()) continue;
-        
-        logProto("Creating new collection from Calibre: %s", collName.c_str());
-        
-        for (const auto& lpath : lpaths) {
-            bookManager->addToCollection(lpath, collName);
-        }
-    }
-    
     return true;
 }
 
@@ -825,79 +764,28 @@ bool CalibreProtocol::handleSendBookMetadata(json_object* args) {
         return sendErrorResponse("Missing metadata");
     }
     
-    // Parse incoming Calibre metadata
-    BookMetadata calibreMetadata = jsonToMetadata(dataObj);
+    BookMetadata metadata = jsonToMetadata(dataObj);
     
-    // Get current device state
-    BookMetadata deviceMetadata;
-    if (!bookManager->getBookMetadata(calibreMetadata.lpath, deviceMetadata)) {
-        logProto("Warning: Metadata sync for non-existent book: %s", calibreMetadata.lpath.c_str());
-        return true;
-    }
+    logProto("Syncing metadata for: %s (Read: %d, Date: %s)", 
+             metadata.title.c_str(), metadata.isRead, metadata.lastReadDate.c_str());
     
-    logProto("Syncing metadata for: %s", calibreMetadata.title.c_str());
-    logProto("  Calibre - Read: %d, Date: %s, Favorite: %d", 
-             calibreMetadata.isRead, calibreMetadata.lastReadDate.c_str(), calibreMetadata.isFavorite);
-    logProto("  Device  - Read: %d, Date: %s, Favorite: %d", 
-             deviceMetadata.isRead, deviceMetadata.lastReadDate.c_str(), deviceMetadata.isFavorite);
-    
-    // CRITICAL: Implement "Calibre wins" sync logic (like Lua wireless.lua:1094-1165)
-    bool needsUpdate = false;
-    
-    // Sync read status
-    if (!readColumn.empty()) {
-        if (calibreMetadata.isRead != deviceMetadata.isRead) {
-            logProto("  -> Updating read status from Calibre: %d -> %d", 
-                    deviceMetadata.isRead, calibreMetadata.isRead);
-            deviceMetadata.isRead = calibreMetadata.isRead;
-            needsUpdate = true;
-        }
-    }
-    
-    // Sync read date
-    if (!readDateColumn.empty()) {
-        if (calibreMetadata.lastReadDate != deviceMetadata.lastReadDate) {
-            logProto("  -> Updating read date from Calibre: %s -> %s", 
-                    deviceMetadata.lastReadDate.c_str(), calibreMetadata.lastReadDate.c_str());
-            deviceMetadata.lastReadDate = calibreMetadata.lastReadDate;
-            needsUpdate = true;
-        }
-    }
-    
-    // Sync favorite status
-    if (!favoriteColumn.empty()) {
-        if (calibreMetadata.isFavorite != deviceMetadata.isFavorite) {
-            logProto("  -> Updating favorite from Calibre: %d -> %d", 
-                    deviceMetadata.isFavorite, calibreMetadata.isFavorite);
-            deviceMetadata.isFavorite = calibreMetadata.isFavorite;
-            needsUpdate = true;
-        }
-    }
-    
-    // Apply updates if needed
-    if (needsUpdate) {
-        if (bookManager->updateBookSync(deviceMetadata)) {
-            logProto("Successfully synced metadata to device");
-            
-            // Update session cache
-            for (auto& b : sessionBooks) {
-                if (b.lpath == deviceMetadata.lpath) {
-                    b.isRead = deviceMetadata.isRead;
-                    b.isFavorite = deviceMetadata.isFavorite;
-                    b.lastReadDate = deviceMetadata.lastReadDate;
-                    break;
-                }
+    if (bookManager->updateBookSync(metadata)) {
+        // Update session cache
+        for(auto& b : sessionBooks) {
+            if (b.lpath == metadata.lpath) { 
+                b.isRead = metadata.isRead;
+                b.isFavorite = metadata.isFavorite;
+                b.lastReadDate = metadata.lastReadDate;
+                break;
             }
-            
-            // Update cache manager
-            if (cacheManager) {
-                cacheManager->updateCache(deviceMetadata);
-            }
-        } else {
-            logProto("ERROR: Failed to update device metadata");
+        }
+        
+        // Update cache manager
+        if (cacheManager) {
+            cacheManager->updateCache(metadata);
         }
     } else {
-        logProto("  No changes needed");
+        logProto("Warning: Attempted to sync metadata for non-existent book");
     }
     
     return true;
