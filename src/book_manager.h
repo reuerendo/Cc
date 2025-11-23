@@ -4,7 +4,6 @@
 #include <string>
 #include <vector>
 #include <map>
-#include <set>
 #include <sqlite3.h>
 #include <ctime>
 
@@ -27,7 +26,6 @@ struct BookMetadata {
     int thumbnailWidth;
     std::string isbn;
     
-    // Sync fields
     bool isRead;
     std::string lastReadDate;
     bool isFavorite;
@@ -45,26 +43,11 @@ public:
     
     bool initialize(const std::string& ignored_path);
     
-    // Full save (when transferring file)
     bool addBook(const BookMetadata& metadata);
-    
-    // Update existing book metadata
     bool updateBook(const BookMetadata& metadata); 
-
-    // Silent sync (status only)
     bool updateBookSync(const BookMetadata& metadata); 
-    
-    // Get current metadata for a book by lpath
-    bool getBookMetadata(const std::string& lpath, BookMetadata& outMetadata);
-    
     bool deleteBook(const std::string& lpath);
-    
-    // Collections management
     void updateCollections(const std::map<std::string, std::vector<std::string>>& collections);
-    std::map<std::string, std::set<std::string>> getCollections();
-    void removeFromCollection(const std::string& lpath, const std::string& collectionName);
-    void addToCollection(const std::string& lpath, const std::string& collectionName);
-    void removeCollection(const std::string& collectionName);
     
     std::vector<BookMetadata> getAllBooks(); 
     int getBookCount();
@@ -73,16 +56,12 @@ public:
 private:
     const std::string SYSTEM_DB_PATH = "/mnt/ext1/system/explorer-3/explorer-3.db";
     std::string booksDir;
-    sqlite3* db;
     
     sqlite3* openDB();
     void closeDB(sqlite3* db);
     
-    // Helper method for safe string extraction from sqlite
-    std::string getString(sqlite3_stmt* stmt, int col);
-    
     int getStorageId(const std::string& filename);
-    int getCurrentProfileId();
+    int getCurrentProfileId(sqlite3* db);
     std::string getFirstLetter(const std::string& str);
     
     int getOrCreateFolder(sqlite3* db, const std::string& folderPath, int storageId);
