@@ -465,23 +465,62 @@ bool CalibreProtocol::handleGetBookCount(json_object* args) {
         useCache = json_object_get_boolean(cacheObj);
     }
     
-    // 3. IMPORTANT: Patch Session Books with Cached UUIDs
-    // BookManager reads from device FS, so it has no UUIDs. We must fetch them from cache.
+    // 3. Check if this is first sync with custom columns
+    bool supportsSync = false;
+    json_object* syncObj = NULL;
+    if (json_object_object_get_ex(args, "supportsSync", &syncObj)) {
+        supportsSync = json_object_get_boolean(syncObj);
+    }
+    
+    // 4. Patch Session Books with Cached data (UUID and sync_type)
     if (cacheManager) {
         int matched = 0;
         for (auto& book : sessionBooks) {
-            std::string cachedUuid = cacheManager->getUuidForLpath(book.lpath);
-            if (!cachedUuid.empty()) {
-                book.uuid = cachedUuid;
-                matched++;
+            BookMetadata cachedMeta;
+            if (cacheManager->getCachedMetadata(book.lpath, cachedMeta)) {
+                // Restore UUID from cache
+                if (!cachedMeta.uuid.empty()) {
+                    book.uuid = cachedMeta.uuid;
+                    matched++;
+                }
+                
+                // NEW: Restore sync_type from cache
+                book.syncType = cachedMeta.syncType;
+                
+                // Restore original values from cache
+                if (cachedMeta.hasOriginalValues) {
+                    book.originalIsRead = cachedMeta.originalIsRead;
+                    book.originalLastReadDate = cachedMeta.originalLastReadDate;
+                    book.originalIsFavorite = cachedMeta.originalIsFavorite;
+                    book.hasOriginalValues = true;
+                }
+            } else {
+                // NEW: Book not in cache - mark as new book
+                if (book.uuid.empty()) {
+                    book.isNewBook = true;
+                    book.syncType = 3; // Device-generated metadata
+                    logProto("Book not in cache, marked as new: %s", book.title.c_str());
+                }
             }
         }
         logProto("UUID Patching: %d/%d books matched in cache", matched, count);
     }
     
-    logProto("GetBookCount: %d books, useCache=%d", count, useCache);
+    // NEW: Detect first sync with custom columns (sync_type = 2)
+    if (supportsSync && !readColumn.empty()) {
+        for (auto& book : sessionBooks) {
+            // If book has UUID but no original values yet, this is first sync with columns
+            if (!book.uuid.empty() && !book.hasOriginalValues && book.syncType == 0) {
+                book.syncType = 2;
+                logProto("First sync with columns for: %s", book.title.c_str());
+            }
+        }
+    }
+    
+    logProto("GetBookCount: %d books, useCache=%d, supportsSync=%d", 
+             count, useCache, supportsSync);
 
-    // 4. Send response with count
+    // 5. Send response with count
     json_object* response = json_object_new_object();
     json_object_object_add(response, "count", json_object_new_int(count));
     json_object_object_add(response, "willStream", json_object_new_boolean(true));
@@ -493,13 +532,12 @@ bool CalibreProtocol::handleGetBookCount(json_object* args) {
     }
     freeJSON(response);
     
-    // 5. Send book list (one by one)
+    // 6. Send book list (one by one)
     for (int i = 0; i < count; i++) {
         json_object* bookJson = NULL;
         
         if (useCache) {
             // Send only brief info + priKey (index)
-            // Driver will compare this against its own cache.
             bookJson = cachedMetadataToJson(sessionBooks[i], i);
         } else {
             // Send full metadata
@@ -621,21 +659,24 @@ BookMetadata CalibreProtocol::jsonToMetadata(json_object* obj) {
     if (json_object_object_get_ex(obj, "size", &val)) metadata.size = json_object_get_int64(val);
     if (json_object_object_get_ex(obj, "last_modified", &val)) metadata.lastModified = safeGetJsonString(val);
 
-    // Priority 1: Explicit sync flag from driver (_is_read_) - this is Calibre's "original" value
+    // NEW: Parse sync_type from Calibre
+    if (json_object_object_get_ex(obj, "_sync_type_", &val)) {
+        metadata.syncType = json_object_get_int(val);
+    }
+
+    // Priority 1: Explicit sync flag from driver
     bool hasExplicitSyncFlag = false;
     if (json_object_object_get_ex(obj, "_is_read_", &val)) {
-        // NEW: Store as ORIGINAL value (what Calibre last sent to device)
         metadata.originalIsRead = json_object_get_boolean(val);
         metadata.hasOriginalValues = true;
         hasExplicitSyncFlag = true;
     }
     
-    // Priority 2: Last read date from driver (_last_read_date_) - this is Calibre's "original" value
+    // Priority 2: Last read date from driver
     bool hasExplicitReadDate = false;
     if (json_object_object_get_ex(obj, "_last_read_date_", &val)) {
         const char* dateStr = json_object_get_string(val);
         if (dateStr && strlen(dateStr) > 0) {
-            // NEW: Store as ORIGINAL value
             metadata.originalLastReadDate = dateStr;
             hasExplicitReadDate = true;
         }
@@ -661,7 +702,8 @@ BookMetadata CalibreProtocol::jsonToMetadata(json_object* obj) {
         }
     }
     
-    // NEW: Set current device state to match original values initially
+    // Set current device state to match original values initially
+	// Set current device state to match original values initially
     // This will be overwritten if device has made local changes
     metadata.isRead = metadata.originalIsRead;
     metadata.lastReadDate = metadata.originalLastReadDate;
@@ -680,10 +722,21 @@ json_object* CalibreProtocol::metadataToJson(const BookMetadata& metadata) {
     json_object_object_add(obj, "last_modified", json_object_new_string(metadata.lastModified.c_str()));
     json_object_object_add(obj, "size", json_object_new_int64(metadata.size));
     
-    // NEW: Send format mtime (file modification time)
+    // Send format mtime
     if (!metadata.formatMtime.empty()) {
         json_object_object_add(obj, "_format_mtime_", 
                               json_object_new_string(metadata.formatMtime.c_str()));
+    }
+    
+    // NEW: Send sync_type
+    if (metadata.syncType != 0) {
+        json_object_object_add(obj, "_sync_type_", json_object_new_int(metadata.syncType));
+    }
+    
+    // NEW: Send _new_book_ flag for device-generated books
+    if (metadata.isNewBook) {
+        json_object_object_add(obj, "_new_book_", json_object_new_boolean(true));
+        logProto("Marking book as new: %s", metadata.title.c_str());
     }
     
     // Send CURRENT device state
@@ -807,13 +860,17 @@ bool CalibreProtocol::handleSendBook(json_object* args) {
     iv_fclose(currentBookFile);
     currentBookFile = nullptr;
     
-    // NEW: Set format_mtime to current time after receiving file
+    // Set format_mtime to current time after receiving file
     time_t now = time(NULL);
     metadata.formatMtime = formatIsoTime(now);
     
+    // NEW: Book is NOT new - it came from Calibre
+    metadata.isNewBook = false;
+    metadata.syncType = 0; // Normal book
+    
     bookManager->addBook(metadata);
     
-    // Update cache with new book including format_mtime
+    // Update cache with new book including all metadata
     if (cacheManager) {
         cacheManager->updateCache(metadata);
     }
@@ -832,10 +889,84 @@ bool CalibreProtocol::handleSendBookMetadata(json_object* args) {
     
     BookMetadata metadata = jsonToMetadata(dataObj);
     
-    logProto("Received metadata for: %s (Calibre says Read: %d, Date: %s)", 
-             metadata.title.c_str(), metadata.originalIsRead, 
-             metadata.originalLastReadDate.c_str());
+    logProto("Received metadata for: %s (sync_type=%d, Calibre says Read: %d)", 
+             metadata.title.c_str(), metadata.syncType, metadata.originalIsRead);
     
+    // NEW: Handle different sync_type scenarios
+    if (metadata.syncType == 3) {
+        // Device-generated metadata - DO NOT sync back to device
+        // Just store it in cache so Calibre knows about it
+        logProto("Device-generated metadata, skipping sync for: %s", metadata.title.c_str());
+        
+        // Update cache only, don't touch DB
+        if (cacheManager) {
+            // Mark as no longer "new" since Calibre now knows about it
+            metadata.isNewBook = false;
+            metadata.syncType = 0; // Reset to normal for future syncs
+            cacheManager->updateCache(metadata);
+        }
+        
+        // Update session books
+        for(auto& sessionBook : sessionBooks) {
+            if (sessionBook.lpath == metadata.lpath) {
+                sessionBook.uuid = metadata.uuid; // Calibre assigned UUID
+                sessionBook.isNewBook = false;
+                sessionBook.syncType = 0;
+                sessionBook.hasOriginalValues = true;
+                sessionBook.originalIsRead = metadata.originalIsRead;
+                sessionBook.originalLastReadDate = metadata.originalLastReadDate;
+                sessionBook.originalIsFavorite = metadata.originalIsFavorite;
+                break;
+            }
+        }
+        
+        return true;
+    }
+    
+    if (metadata.syncType == 2) {
+        // First sync with custom columns - special merge logic
+        logProto("First sync with custom columns for: %s", metadata.title.c_str());
+        
+        // Merge with current device state
+        for(auto& sessionBook : sessionBooks) {
+            if (sessionBook.lpath == metadata.lpath) {
+                // Device value wins if it's not None/default
+                if (sessionBook.isRead) {
+                    // Keep device's read status
+                    metadata.isRead = sessionBook.isRead;
+                    metadata.lastReadDate = sessionBook.lastReadDate;
+                    logProto("Device read status wins: Read=%d", sessionBook.isRead);
+                } else if (metadata.originalIsRead) {
+                    // Calibre value wins
+                    metadata.isRead = metadata.originalIsRead;
+                    metadata.lastReadDate = metadata.originalLastReadDate;
+                    logProto("Calibre read status wins: Read=%d", metadata.originalIsRead);
+                }
+                
+                // Update session book
+                sessionBook.originalIsRead = metadata.originalIsRead;
+                sessionBook.originalLastReadDate = metadata.originalLastReadDate;
+                sessionBook.originalIsFavorite = metadata.originalIsFavorite;
+                sessionBook.hasOriginalValues = true;
+                sessionBook.syncType = 0; // Reset to normal after first sync
+                sessionBook.formatMtime = metadata.formatMtime;
+                
+                break;
+            }
+        }
+        
+        // Always update DB for first sync
+        bookManager->updateBookSync(metadata);
+        
+        if (cacheManager) {
+            metadata.syncType = 0; // Store as normal in cache
+            cacheManager->updateCache(metadata);
+        }
+        
+        return true;
+    }
+    
+    // Normal sync (sync_type == 0 or not set)
     // Merge with current device state before updating
     for(auto& sessionBook : sessionBooks) {
         if (sessionBook.lpath == metadata.lpath) {
@@ -844,7 +975,7 @@ bool CalibreProtocol::handleSendBookMetadata(json_object* args) {
             metadata.lastReadDate = sessionBook.lastReadDate;
             metadata.isFavorite = sessionBook.isFavorite;
             
-            // NEW: Keep existing format_mtime
+            // Keep existing format_mtime
             metadata.formatMtime = sessionBook.formatMtime;
             
             // Update the session book with new original values
@@ -852,7 +983,8 @@ bool CalibreProtocol::handleSendBookMetadata(json_object* args) {
             sessionBook.originalLastReadDate = metadata.originalLastReadDate;
             sessionBook.originalIsFavorite = metadata.originalIsFavorite;
             sessionBook.hasOriginalValues = true;
-			logProto("Merged: Device state Read=%d, Original Read=%d", 
+            
+            logProto("Merged: Device state Read=%d, Original Read=%d", 
                      sessionBook.isRead, sessionBook.originalIsRead);
             break;
         }

@@ -283,7 +283,9 @@ bool BookManager::addBook(const BookMetadata& metadata) {
     std::string firstTitleLetter = getFirstLetter(metadata.title);
 
     if (fileId != -1) {
-        // NEW: Update file modification_time from stat
+        // Book already exists - update it
+        LOG_MSG("Updating existing book: %s", metadata.title.c_str());
+        
         const char* updateFileSql = "UPDATE files SET size = ?, modification_time = ? WHERE id = ?";
         if (sqlite3_prepare_v2(db, updateFileSql, -1, &stmt, nullptr) == SQLITE_OK) {
             sqlite3_bind_int64(stmt, 1, (long long)st.st_size);
@@ -317,6 +319,9 @@ bool BookManager::addBook(const BookMetadata& metadata) {
             sqlite3_finalize(stmt);
         }
     } else {
+        // NEW: New book being added
+        LOG_MSG("Adding new book: %s", metadata.title.c_str());
+        
         const char* insertBookSql = 
             "INSERT INTO books_impl (title, first_title_letter, author, firstauthor, "
             "first_author_letter, series, numinseries, size, isbn, sort_title, creationtime, "
@@ -345,7 +350,6 @@ bool BookManager::addBook(const BookMetadata& metadata) {
         }
 
         if (bookId != -1) {
-            // NEW: Insert with modification_time from stat
             const char* insertFileSql = 
                 "INSERT INTO files (storageid, folder_id, book_id, filename, size, modification_time, ext) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)";

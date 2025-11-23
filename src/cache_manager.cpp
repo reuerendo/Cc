@@ -137,10 +137,15 @@ bool CacheManager::loadCache() {
             metadata.lastModified = str ? str : "";
         }
         
-        // NEW: Load format mtime
+        // Load format mtime
         if (json_object_object_get_ex(bookObj, "_format_mtime_", &tmp)) {
             const char* str = json_object_get_string(tmp);
             metadata.formatMtime = str ? str : "";
+        }
+        
+        // NEW: Load sync_type
+        if (json_object_object_get_ex(bookObj, "_sync_type_", &tmp)) {
+            metadata.syncType = json_object_get_int(tmp);
         }
         
         // Current sync fields
@@ -204,10 +209,16 @@ bool CacheManager::saveCache() {
         json_object_object_add(bookObj, "lpath", json_object_new_string(meta.lpath.c_str()));
         json_object_object_add(bookObj, "last_modified", json_object_new_string(meta.lastModified.c_str()));
         
-        // NEW: Save format mtime
+        // Save format mtime
         if (!meta.formatMtime.empty()) {
             json_object_object_add(bookObj, "_format_mtime_", 
                                   json_object_new_string(meta.formatMtime.c_str()));
+        }
+        
+        // NEW: Save sync_type
+        if (meta.syncType != 0) {
+            json_object_object_add(bookObj, "_sync_type_", 
+                                  json_object_new_int(meta.syncType));
         }
         
         // Current sync fields

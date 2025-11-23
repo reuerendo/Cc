@@ -26,24 +26,33 @@ struct BookMetadata {
     int thumbnailWidth;
     std::string isbn;
     
+    // Sync fields - CURRENT device state
     bool isRead;
     std::string lastReadDate;
     bool isFavorite;
     
+    // Original values from Calibre (for sync comparison)
     bool originalIsRead;
     std::string originalLastReadDate;
     bool originalIsFavorite;
     bool hasOriginalValues;
     
+    // Format modification time (for book file updates)
     std::string formatMtime;
+    
+    // NEW: Sync type and new book flag
+    int syncType;  // 0=normal, 2=first sync with custom columns, 3=device-generated metadata
+    bool isNewBook; // Book was added by device, not yet known to Calibre
     
     int dbBookId; 
     
     BookMetadata() : seriesIndex(0), size(0), thumbnailHeight(0), 
                      thumbnailWidth(0), isRead(false), isFavorite(false),
                      originalIsRead(false), originalIsFavorite(false),
-                     hasOriginalValues(false), dbBookId(-1) {}
+                     hasOriginalValues(false), syncType(0), isNewBook(false),
+                     dbBookId(-1) {}
 };
+
 class BookManager {
 public:
     BookManager();
