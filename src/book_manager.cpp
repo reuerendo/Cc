@@ -214,6 +214,14 @@ bool BookManager::processBookSettings(sqlite3* db, int bookId, const BookMetadat
     return true;
 }
 
+static time_t roundToDay(time_t timestamp) {
+    struct tm* tm_info = localtime(&timestamp);
+    tm_info->tm_hour = 0;
+    tm_info->tm_min = 0;
+    tm_info->tm_sec = 0;
+    return mktime(tm_info);
+}
+
 bool BookManager::addBook(const BookMetadata& metadata) {
     std::string fullPath = getBookFilePath(metadata.lpath);
     
@@ -242,6 +250,7 @@ bool BookManager::addBook(const BookMetadata& metadata) {
 
     int storageId = getStorageId(fullPath);
     time_t now = time(NULL);
+    time_t dayRounded = roundToDay(now); // Round to start of day
 
     sqlite3_exec(db, "BEGIN TRANSACTION", NULL, NULL, NULL);
 
@@ -299,7 +308,7 @@ bool BookManager::addBook(const BookMetadata& metadata) {
             sqlite3_bind_text(stmt, 9, metadata.isbn.c_str(), -1, SQLITE_TRANSIENT);
             sqlite3_bind_text(stmt, 10, metadata.title.c_str(), -1, SQLITE_TRANSIENT);
             sqlite3_bind_int64(stmt, 11, now);
-            sqlite3_bind_int64(stmt, 12, now); 
+            sqlite3_bind_int64(stmt, 12, dayRounded); // Use rounded timestamp
             sqlite3_bind_int(stmt, 13, bookId);
             
             sqlite3_step(stmt);
@@ -324,7 +333,7 @@ bool BookManager::addBook(const BookMetadata& metadata) {
             sqlite3_bind_text(stmt, 10, metadata.title.c_str(), -1, SQLITE_TRANSIENT);
             sqlite3_bind_int(stmt, 11, 0);
             sqlite3_bind_int(stmt, 12, 0);
-            sqlite3_bind_int64(stmt, 13, now);
+            sqlite3_bind_int64(stmt, 13, dayRounded); // Use rounded timestamp
             sqlite3_bind_int(stmt, 14, 0);
             
             if (sqlite3_step(stmt) == SQLITE_DONE) {
