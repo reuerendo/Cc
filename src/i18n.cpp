@@ -1,5 +1,5 @@
-#include "inkview.h"
 #include "i18n.h"
+#include "inkview.h"
 #include <string.h>
 
 // Translation table: [language][string_id]
@@ -127,7 +127,7 @@ static LanguageCode mapPocketbookLanguage(int pbLang) {
 }
 
 void i18n_init() {
-    // Get system language from Pocketbook using the extern'd GetLang function
+    // Get system language from Pocketbook
     int systemLang = GetLang();
     currentLanguage = mapPocketbookLanguage(systemLang);
 }
@@ -149,5 +149,3 @@ void i18n_set_language(LanguageCode lang) {
 LanguageCode i18n_get_language() {
     return currentLanguage;
 }
-
-
