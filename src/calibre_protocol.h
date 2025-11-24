@@ -36,7 +36,7 @@ private:
     std::string errorMessage;
     std::vector<BookMetadata> sessionBooks;
     
-    // Настройки столбцов Calibre
+    // Calibre column settings
     std::string readColumn;
     std::string readDateColumn;
     std::string favoriteColumn;
