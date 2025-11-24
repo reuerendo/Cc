@@ -1,5 +1,5 @@
-#include "i18n.h"
 #include "inkview.h"
+#include "i18n.h"
 #include <string.h>
 
 // Translation table: [language][string_id]
@@ -149,3 +149,4 @@ void i18n_set_language(LanguageCode lang) {
 LanguageCode i18n_get_language() {
     return currentLanguage;
 }
+
