@@ -125,70 +125,68 @@ void initConfigItems() {
     configItems = (iconfigedit*)calloc(7, sizeof(iconfigedit));
     
     configItems[0].type = CFG_IPADDR;
-	NULL;
-    configItems[0].name = strdup(i18n_get(STR_IP_ADDRESS));
-	NULL;
-    configItems[0].key = (char*)KEY_IP;
+    configItems[0].icon = NULL;
+    configItems[0].text = strdup(i18n_get(STR_IP_ADDRESS));
+    configItems[0].hint = NULL;
+    configItems[0].name = (char*)KEY_IP;
     configItems[0].deflt = (char*)DEFAULT_IP;
-	NULL;
-	NULL
+    configItems[0].variants = NULL;
+    configItems[0].submenu = NULL;
     
     configItems[1].type = CFG_NUMBER;
-	NULL;
-    configItems[1].name = strdup(i18n_get(STR_PORT));
-	NULL;
-    configItems[1].key = (char*)KEY_PORT;
+    configItems[1].icon = NULL;
+    configItems[1].text = strdup(i18n_get(STR_PORT));
+    configItems[1].hint = NULL;
+    configItems[1].name = (char*)KEY_PORT;
     configItems[1].deflt = (char*)DEFAULT_PORT;
-	NULL;
-	NULL
+    configItems[1].variants = NULL;
+    configItems[1].submenu = NULL;
     
     configItems[2].type = CFG_PASSWORD;
-	NULL;
-    configItems[2].name = strdup(i18n_get(STR_PASSWORD));
-	NULL;
-    configItems[2].key = (char*)KEY_PASSWORD;
+    configItems[2].icon = NULL;
+    configItems[2].text = strdup(i18n_get(STR_PASSWORD));
+    configItems[2].hint = NULL;
+    configItems[2].name = (char*)KEY_PASSWORD;
     configItems[2].deflt = (char*)DEFAULT_PASSWORD;
-	NULL;
-	NULL
+    configItems[2].variants = NULL;
+    configItems[2].submenu = NULL;
     
     configItems[3].type = CFG_TEXT;
-	NULL;
-    configItems[3].name = strdup(i18n_get(STR_READ_COLUMN));
-	NULL;
-    configItems[3].key = (char*)KEY_READ_COLUMN;
+    configItems[3].icon = NULL;
+    configItems[3].text = strdup(i18n_get(STR_READ_COLUMN));
+    configItems[3].hint = NULL;
+    configItems[3].name = (char*)KEY_READ_COLUMN;
     configItems[3].deflt = (char*)DEFAULT_READ_COLUMN;
-	NULL;
-	NULL
+    configItems[3].variants = NULL;
+    configItems[3].submenu = NULL;
     
     configItems[4].type = CFG_TEXT;
-	NULL;
-    configItems[4].name = strdup(i18n_get(STR_READ_DATE_COLUMN));
-	NULL;
-    configItems[4].key = (char*)KEY_READ_DATE_COLUMN;
+    configItems[4].icon = NULL;
+    configItems[4].text = strdup(i18n_get(STR_READ_DATE_COLUMN));
+    configItems[4].hint = NULL;
+    configItems[4].name = (char*)KEY_READ_DATE_COLUMN;
     configItems[4].deflt = (char*)DEFAULT_READ_DATE_COLUMN;
-	NULL;
-	NULL
+    configItems[4].variants = NULL;
+    configItems[4].submenu = NULL;
     
     configItems[5].type = CFG_TEXT;
-	NULL;
-    configItems[5].name = strdup(i18n_get(STR_FAVORITE_COLUMN));
-	NULL;
-    configItems[5].key = (char*)KEY_FAVORITE_COLUMN;
+    configItems[5].icon = NULL;
+    configItems[5].text = strdup(i18n_get(STR_FAVORITE_COLUMN));
+    configItems[5].hint = NULL;
+    configItems[5].name = (char*)KEY_FAVORITE_COLUMN;
     configItems[5].deflt = (char*)DEFAULT_FAVORITE_COLUMN;
-	NULL;
-	NULL
+    configItems[5].variants = NULL;
+    configItems[5].submenu = NULL;
     
-    {
-        0,
-        NULL,
-        NULL,
-        NULL,
-        NULL,
-        NULL,
-        NULL,
-        NULL
-    }
-};
+    configItems[6].type = 0;
+    configItems[6].icon = NULL;
+    configItems[6].text = NULL;
+    configItems[6].hint = NULL;
+    configItems[6].name = NULL;
+    configItems[6].deflt = NULL;
+    configItems[6].variants = NULL;
+    configItems[6].submenu = NULL;
+}
 
 void freeConfigItems() {
     if (configItems) {
