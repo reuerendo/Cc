@@ -2,7 +2,7 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <vector>
-#include <algorithm>
+#include <algorithm>  // <-- Добавьте эту строку
 #include "inkview.h"
 #include <json-c/json.h>
 #include <openssl/sha.h>

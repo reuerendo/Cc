@@ -39,7 +39,7 @@ void initLog() {
     logFile = iv_fopen(logPath, "a");
     if (logFile) {
         time_t now = time(NULL);
-        fprintf(logFile, "\n=== Calibre Connect Started [%s] ===\n", ctime(&now));
+        fprintf(logFile, "\n= Calibre Connect Started [%s] =\n", ctime(&now));
         fflush(logFile);
     }
 }
@@ -67,7 +67,7 @@ void closeLog() {
     if (logFile) {
         // Log closing time only
         time_t now = time(NULL);
-        fprintf(logFile, "=== Calibre Connect Closed [%s] ===\n", ctime(&now));
+        fprintf(logFile, "= Calibre Connect Closed [%s] =\n", ctime(&now));
         fflush(logFile);
         iv_fclose(logFile);
         logFile = NULL;
@@ -117,7 +117,7 @@ static iconfigedit configItems[] = {
     {
         CFG_IPADDR,
         NULL,
-        (char *)"     IP Address",
+        (char *)"    IP Address",
         NULL,
         (char *)KEY_IP,
         (char *)DEFAULT_IP,
@@ -127,7 +127,7 @@ static iconfigedit configItems[] = {
     {
         CFG_NUMBER,
         NULL,
-        (char *)"     Port",
+        (char *)"    Port",
         NULL,
         (char *)KEY_PORT,
         (char *)DEFAULT_PORT,
@@ -137,7 +137,7 @@ static iconfigedit configItems[] = {
     {
         CFG_PASSWORD,
         NULL,
-        (char *)"     Password",
+        (char *)"    Password",
         NULL,
         (char *)KEY_PASSWORD,
         (char *)DEFAULT_PASSWORD,
@@ -147,7 +147,7 @@ static iconfigedit configItems[] = {
     {
         CFG_TEXT,
         NULL,
-        (char *)"     Read Status Column",
+        (char *)"    Read Status Column",
         NULL,
         (char *)KEY_READ_COLUMN,
         (char *)DEFAULT_READ_COLUMN,
@@ -157,7 +157,7 @@ static iconfigedit configItems[] = {
     {
         CFG_TEXT,
         NULL,
-        (char *)"     Read Date Column",
+        (char *)"    Read Date Column",
         NULL,
         (char *)KEY_READ_DATE_COLUMN,
         (char *)DEFAULT_READ_DATE_COLUMN,
@@ -167,7 +167,7 @@ static iconfigedit configItems[] = {
     {
         CFG_TEXT,
         NULL,
-        (char *)"     Favorite Column",
+        (char *)"    Favorite Column",
         NULL,
         (char *)KEY_FAVORITE_COLUMN,
         (char *)DEFAULT_FAVORITE_COLUMN,
@@ -217,7 +217,6 @@ void* connectionThreadFunc(void* arg) {
         return NULL;
     }
     
-    // Try to connect to Calibre (TCP)
     if (!networkManager->connectToServer(ip, port)) {
         isConnecting = false;
         notifyConnectionFailed("Failed to connect to Calibre server.\nPlease check IP address and port.");
@@ -241,16 +240,19 @@ void* connectionThreadFunc(void* arg) {
         return NULL;
     }
     
-    // Handshake successful - Notify UI of connection
     logMsg("Handshake successful");
     SendEvent(mainEventHandler, EVT_SHOW_TOAST, TOAST_CONNECTED, 0);
     
+    // Handle messages with callback that tracks book additions
     protocol->handleMessages([](const std::string& status) {
         if (status == "BOOK_SAVED") {
-            int count = protocol->getBooksReceivedCount();
-            SendEvent(mainEventHandler, EVT_BOOK_RECEIVED, count, 0);
+            // Send event with current book count
+            if (protocol) {
+                int count = protocol->getBooksReceivedCount();
+                logMsg("Book received, total count: %d", count);
+                SendEvent(mainEventHandler, EVT_BOOK_RECEIVED, count, 0);
+            }
         }
-        // No logging for intermediate statuses to reduce spam
     });
     
     logMsg("Disconnecting");
@@ -260,7 +262,6 @@ void* connectionThreadFunc(void* arg) {
     
     isConnecting = false;
     
-    // Notify UI of disconnection
     SendEvent(mainEventHandler, EVT_SHOW_TOAST, TOAST_DISCONNECTED, 0);
     
     return NULL;
@@ -432,11 +433,7 @@ int mainEventHandler(int type, int par1, int par2) {
             SetPanelType(PANEL_ENABLED);
             initConfig();
             showMainScreen();
-            
-            // Force an initial update to ensure the config screen is drawn
             SoftUpdate();
-            
-            // Schedule the connection start after 300ms to allow UI to render
             SetWeakTimer("ConnectTimer", connectionTimerFunc, 300);
             break;
             
@@ -463,9 +460,21 @@ int mainEventHandler(int type, int par1, int par2) {
                    "Retry", "Cancel", 
                    retryConnectionHandler);
             break;
+            
+        case EVT_BOOK_RECEIVED: {
+            // par1 contains the total number of books received
+            char msgBuf[128];
+            if (par1 == 1) {
+                snprintf(msgBuf, sizeof(msgBuf), "1 book added");
+            } else {
+                snprintf(msgBuf, sizeof(msgBuf), "%d books added", par1);
+            }
+            Message(ICON_INFORMATION, "Calibre", msgBuf, 2000);
+            logMsg("Showing book received message: %s", msgBuf);
+            break;
+        }
 
         case EVT_SHOW_TOAST:
-            // Handle toast messages ONLY for Connected/Disconnected
             if (par1 == TOAST_CONNECTED) {
                 Message(ICON_INFORMATION, "Calibre", "Connected Successfully", 2000);
             } else if (par1 == TOAST_DISCONNECTED) {
