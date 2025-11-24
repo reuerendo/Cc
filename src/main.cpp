@@ -278,15 +278,19 @@ void startCalibreConnection() {
     
     // --- 1. Prepare Managers (Main Thread) ---
     // Resetting unique_ptrs automatically deletes old objects
-    if (!networkManager) networkManager = std::make_unique<NetworkManager>();
+    // FIX: Using reset(new T()) instead of std::make_unique<T>() for C++11 compatibility
+    
+    if (!networkManager) {
+        networkManager.reset(new NetworkManager());
+    }
     
     if (!bookManager) {
-        bookManager = std::make_unique<BookManager>();
+        bookManager.reset(new BookManager());
         bookManager->initialize("");
     }
     
     if (!cacheManager) {
-        cacheManager = std::make_unique<CacheManager>();
+        cacheManager.reset(new CacheManager());
     }
     
     // --- 2. Read Configuration (Main Thread) ---
@@ -310,14 +314,15 @@ void startCalibreConnection() {
     const char* readDateCol = ReadString(appConfig, KEY_READ_DATE_COLUMN, DEFAULT_READ_DATE_COLUMN);
     const char* favCol = ReadString(appConfig, KEY_FAVORITE_COLUMN, DEFAULT_FAVORITE_COLUMN);
     
-    protocol = std::make_unique<CalibreProtocol>(
+    // FIX: Using reset(new T(...)) for C++11 compatibility
+    protocol.reset(new CalibreProtocol(
         networkManager.get(), 
         bookManager.get(), 
         cacheManager.get(),
         readCol ? readCol : "", 
         readDateCol ? readDateCol : "", 
         favCol ? favCol : ""
-    );
+    ));
     
     // --- 3. Start Thread ---
     // Join previous thread if it was finished but not joined
