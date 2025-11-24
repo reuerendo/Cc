@@ -3,9 +3,7 @@
 #include <errno.h>
 #include <vector>
 #include <algorithm>
-#include <map>
-#include <set>
-#include "inkview.h" // Required for iv_mkdir, iv_fopen, etc.
+#include "inkview.h"
 #include <json-c/json.h>
 #include <openssl/sha.h>
 #include <sys/statvfs.h>
@@ -14,34 +12,58 @@
 #include <iomanip>
 #include <ctime>
 
-// Optimized recursive mkdir using SDK wrapper iv_mkdir
+// Helper for logging
+static void logProto(const char* fmt, ...) {
+    FILE* f = fopen("/mnt/ext1/system/calibre-connect.log", "a");
+    if (f) {
+        va_list args;
+        va_start(args, fmt);
+        vfprintf(f, fmt, args);
+        va_end(args);
+        fprintf(f, "\n");
+        fflush(f);
+        fclose(f);
+    }
+}
+
 static int recursiveMkdir(const std::string& path) {
-    std::string current_path = path;
-    if (current_path.empty()) return 0;
+    std::string current_path;
+    std::string path_copy = path;
     
-    // Remove trailing slash
-    if (current_path.back() == '/') {
-        current_path.pop_back();
+    if (!path_copy.empty() && path_copy.back() == '/') {
+        path_copy.pop_back();
     }
 
-    // Iterate through string finding slashes
-    for (size_t i = 1; i < current_path.length(); ++i) {
-        if (current_path[i] == '/') {
-            current_path[i] = 0; // Temporarily terminate string
-            // Use iv_mkdir from inkview.h
-            if (iv_mkdir(current_path.c_str(), 0755) != 0) {
-                if (errno != EEXIST) {
-                    return -1;
-                }
-            }
-            current_path[i] = '/'; // Restore slash
-        }
+    size_t pos = 0;
+    if (!path_copy.empty() && path_copy[0] == '/') {
+        current_path = "/";
+        pos = 1;
     }
-    
-    // Create final directory using iv_mkdir
-    if (iv_mkdir(current_path.c_str(), 0755) != 0) {
-        if (errno != EEXIST) {
-            return -1;
+
+    while (pos < path_copy.length()) {
+        size_t next_slash = path_copy.find('/', pos);
+        std::string part;
+        
+        if (next_slash == std::string::npos) {
+            part = path_copy.substr(pos);
+            pos = path_copy.length();
+        } else {
+            part = path_copy.substr(pos, next_slash - pos);
+            pos = next_slash + 1;
+        }
+        
+        if (part.empty()) continue;
+
+        if (current_path.length() > 0 && current_path.back() != '/') {
+            current_path += "/";
+        }
+        current_path += part;
+
+        if (mkdir(current_path.c_str(), 0755) != 0) {
+            if (errno != EEXIST) {
+                logProto("Failed to create directory %s: %s", current_path.c_str(), strerror(errno));
+                return -1;
+            }
         }
     }
     return 0;
@@ -74,6 +96,8 @@ CalibreProtocol::CalibreProtocol(NetworkManager* net, BookManager* bookMgr,
     }
     
     appVersion = "1.0.0";
+    
+    logProto("Device name: %s", deviceName.c_str());
 }
 
 CalibreProtocol::~CalibreProtocol() {
@@ -135,8 +159,7 @@ json_object* CalibreProtocol::createDeviceInfo() {
     json_object_object_add(info, "deviceKind", json_object_new_string("PocketBook"));
     json_object_object_add(info, "deviceName", json_object_new_string(deviceName.c_str()));
     json_object_object_add(info, "extensionPathLengths", pathLengths);
-    // OPTIMIZATION: Increased buffer size from 4096 to 65536
-    json_object_object_add(info, "maxBookContentPacketLen", json_object_new_int(65536));
+    json_object_object_add(info, "maxBookContentPacketLen", json_object_new_int(4096));
     json_object_object_add(info, "useUuidFileNames", json_object_new_boolean(false));
     json_object_object_add(info, "versionOK", json_object_new_boolean(true));
     
@@ -226,7 +249,6 @@ bool CalibreProtocol::performHandshake(const std::string& password) {
     json_object* deviceInfo = json_object_new_object();
     json_object* deviceData = json_object_new_object();
     
-    // Using GetGlobalConfig from inkview.h and ReadString
     const char* uuid = ReadString(GetGlobalConfig(), "calibre_device_uuid", "");
     if (strlen(uuid) == 0) {
         char uuidBuf[64];
@@ -234,8 +256,6 @@ bool CalibreProtocol::performHandshake(const std::string& password) {
         snprintf(uuidBuf, sizeof(uuidBuf), "%08x-%04x-%04x-%04x-%012llx",
                 (unsigned int)rand(), rand() & 0xFFFF, rand() & 0xFFFF, 
                 rand() & 0xFFFF, (unsigned long long)rand() * rand());
-        
-        // WriteString and SaveConfig
         WriteString(GetGlobalConfig(), "calibre_device_uuid", uuidBuf);
         SaveConfig(GetGlobalConfig());
         uuid = ReadString(GetGlobalConfig(), "calibre_device_uuid", "");
@@ -284,6 +304,8 @@ void CalibreProtocol::handleMessages(std::function<void(const std::string&)> sta
             connected = false;
             break;
         }
+        
+        logProto("[PROTOCOL] Received opcode %d", (int)opcode);
         
         json_object* args = parseJSON(jsonData);
         if (!args) {
@@ -367,6 +389,7 @@ void CalibreProtocol::handleMessages(std::function<void(const std::string&)> sta
         
         if (shouldDisconnect) {
             connected = false;
+            logProto("[PROTOCOL] Clean disconnect");
             return;
         }
     }
@@ -382,7 +405,7 @@ void CalibreProtocol::disconnect() {
     }
     
     if (currentBookFile) {
-        iv_fclose(currentBookFile); // Using iv_fclose
+        iv_fclose(currentBookFile);
         currentBookFile = nullptr;
     }
     
@@ -400,7 +423,6 @@ bool CalibreProtocol::handleSetCalibreInfo(json_object* args) {
 
 bool CalibreProtocol::handleTotalSpace(json_object* args) {
     struct statvfs stat;
-    // Using standard statvfs as SDK doesn't provide a wrapper for this specific call
     if (statvfs("/mnt/ext1", &stat) != 0) {
         return sendErrorResponse("Failed to get total space");
     }
@@ -451,14 +473,19 @@ bool CalibreProtocol::handleGetBookCount(json_object* args) {
     }
     
     if (cacheManager) {
+        int matched = 0;
         for (auto& book : sessionBooks) {
             std::string cachedUuid = cacheManager->getUuidForLpath(book.lpath);
             if (!cachedUuid.empty()) {
                 book.uuid = cachedUuid;
+                matched++;
             }
         }
+        logProto("UUID Patching: %d/%d books matched in cache", matched, count);
     }
     
+    logProto("GetBookCount: %d books, useCache=%d", count, useCache);
+
     json_object* response = json_object_new_object();
     json_object_object_add(response, "count", json_object_new_int(count));
     json_object_object_add(response, "willStream", json_object_new_boolean(true));
@@ -512,6 +539,8 @@ bool CalibreProtocol::handleSendBooklists(json_object* args) {
         return true;
     }
     
+    logProto("Starting collection sync");
+    
     // Step 1: Build a map of Calibre collections with their files
     std::map<std::string, std::set<std::string>> calibreCollections;
     
@@ -526,47 +555,18 @@ bool CalibreProtocol::handleSendBooklists(json_object* args) {
         }
         
         calibreCollections[cleanName] = lpaths;
+        logProto("Calibre collection '%s' has %d books", cleanName.c_str(), (int)lpaths.size());
     }
     
     // Step 2: Get current device collections from database
     std::map<std::string, std::set<std::string>> deviceCollections;
-    
-    // OPTIMIZATION: Map paths to IDs once to avoid redundant SQL queries later
-    std::map<std::string, int> pathToIdMap;
-
     sqlite3* db = bookManager->openDB();
     if (!db) {
+        logProto("Failed to open DB for collection sync");
         return false;
     }
     
-    // 2a. Pre-load Book Path -> ID mapping
-    const char* mapSql = 
-        "SELECT b.id, f.filename, fo.name "
-        "FROM books_impl b "
-        "JOIN files f ON b.id = f.book_id "
-        "JOIN folders fo ON f.folder_id = fo.id "
-        "WHERE b.is_deleted = 0";
-
-    sqlite3_stmt* mapStmt;
-    if (sqlite3_prepare_v2(db, mapSql, -1, &mapStmt, nullptr) == SQLITE_OK) {
-        while (sqlite3_step(mapStmt) == SQLITE_ROW) {
-            int id = sqlite3_column_int(mapStmt, 0);
-            const char* fileName = (const char*)sqlite3_column_text(mapStmt, 1);
-            const char* folderName = (const char*)sqlite3_column_text(mapStmt, 2);
-            
-            if (fileName && folderName) {
-                std::string fullPath = std::string(folderName) + "/" + fileName;
-                std::string lpath = fullPath;
-                if (lpath.find("/mnt/ext1/") == 0) {
-                    lpath = lpath.substr(10); // strlen("/mnt/ext1/")
-                }
-                pathToIdMap[lpath] = id;
-            }
-        }
-        sqlite3_finalize(mapStmt);
-    }
-
-    // 2b. Query existing collections
+    // Query all bookshelves and their books
     const char* sql = 
         "SELECT bs.name, f.filename, fo.name "
         "FROM bookshelfs bs "
@@ -585,9 +585,11 @@ bool CalibreProtocol::handleSendBooklists(json_object* args) {
             
             if (shelfName && fileName && folderName) {
                 std::string fullPath = std::string(folderName) + "/" + fileName;
+                
+                // Extract lpath (remove /mnt/ext1/ prefix)
                 std::string lpath = fullPath;
                 if (lpath.find("/mnt/ext1/") == 0) {
-                    lpath = lpath.substr(10);
+                    lpath = lpath.substr(10); // strlen("/mnt/ext1/")
                 }
                 
                 deviceCollections[shelfName].insert(lpath);
@@ -595,6 +597,8 @@ bool CalibreProtocol::handleSendBooklists(json_object* args) {
         }
         sqlite3_finalize(stmt);
     }
+    
+    logProto("Found %d collections on device", (int)deviceCollections.size());
     
     // Step 3: Compute changes for each collection
     sqlite3_exec(db, "BEGIN TRANSACTION", NULL, NULL, NULL);
@@ -607,6 +611,7 @@ bool CalibreProtocol::handleSendBooklists(json_object* args) {
         
         int shelfId = bookManager->getOrCreateBookshelf(db, collectionName);
         if (shelfId == -1) {
+            logProto("Failed to get/create shelf: %s", collectionName.c_str());
             continue;
         }
         
@@ -617,31 +622,34 @@ bool CalibreProtocol::handleSendBooklists(json_object* args) {
             // Collection exists on both - sync differences
             const std::set<std::string>& deviceFiles = deviceIt->second;
             
+            // Find files to add (in Calibre but not on device)
             std::vector<std::string> toAdd;
             std::set_difference(calibreFiles.begin(), calibreFiles.end(),
                               deviceFiles.begin(), deviceFiles.end(),
                               std::back_inserter(toAdd));
             
+            // Find files to remove (on device but not in Calibre)
             std::vector<std::string> toRemove;
             std::set_difference(deviceFiles.begin(), deviceFiles.end(),
                               calibreFiles.begin(), calibreFiles.end(),
                               std::back_inserter(toRemove));
             
+            logProto("Collection '%s': %d to add, %d to remove", 
+                    collectionName.c_str(), (int)toAdd.size(), (int)toRemove.size());
+            
             // Add books
             for (const std::string& lpath : toAdd) {
-                // OPTIMIZATION: Use map instead of DB query
-                auto it = pathToIdMap.find(lpath);
-                if (it != pathToIdMap.end()) {
-                    bookManager->linkBookToShelf(db, shelfId, it->second);
+                int bookId = bookManager->findBookIdByPath(db, lpath);
+                if (bookId != -1) {
+                    bookManager->linkBookToShelf(db, shelfId, bookId);
+                    logProto("Added book to collection: %s -> %s", lpath.c_str(), collectionName.c_str());
                 }
             }
             
             // Remove books
             for (const std::string& lpath : toRemove) {
-                // OPTIMIZATION: Use map instead of DB query
-                auto it = pathToIdMap.find(lpath);
-                if (it != pathToIdMap.end()) {
-                    int bookId = it->second;
+                int bookId = bookManager->findBookIdByPath(db, lpath);
+                if (bookId != -1) {
                     // Mark link as deleted
                     const char* deleteSql = 
                         "UPDATE bookshelfs_books SET is_deleted = 1, ts = ? "
@@ -654,6 +662,7 @@ bool CalibreProtocol::handleSendBooklists(json_object* args) {
                         sqlite3_step(deleteStmt);
                         sqlite3_finalize(deleteStmt);
                     }
+                    logProto("Removed book from collection: %s -> %s", lpath.c_str(), collectionName.c_str());
                 }
             }
             
@@ -662,11 +671,13 @@ bool CalibreProtocol::handleSendBooklists(json_object* args) {
             
         } else {
             // New collection - add all books
+            logProto("Creating new collection: %s with %d books", 
+                    collectionName.c_str(), (int)calibreFiles.size());
+            
             for (const std::string& lpath : calibreFiles) {
-                // OPTIMIZATION: Use map instead of DB query
-                auto it = pathToIdMap.find(lpath);
-                if (it != pathToIdMap.end()) {
-                    bookManager->linkBookToShelf(db, shelfId, it->second);
+                int bookId = bookManager->findBookIdByPath(db, lpath);
+                if (bookId != -1) {
+                    bookManager->linkBookToShelf(db, shelfId, bookId);
                 }
             }
         }
@@ -675,6 +686,8 @@ bool CalibreProtocol::handleSendBooklists(json_object* args) {
     // Step 4: Remove collections that exist on device but not in Calibre
     for (const auto& deviceEntry : deviceCollections) {
         const std::string& collectionName = deviceEntry.first;
+        
+        logProto("Removing collection no longer in Calibre: %s", collectionName.c_str());
         
         const char* deleteSql = "UPDATE bookshelfs SET is_deleted = 1, ts = ? WHERE name = ?";
         sqlite3_stmt* deleteStmt;
@@ -690,6 +703,8 @@ bool CalibreProtocol::handleSendBooklists(json_object* args) {
     sqlite3_exec(db, "PRAGMA wal_checkpoint(FULL)", NULL, NULL, NULL);
     
     bookManager->closeDB(db);
+    
+    logProto("Collection sync completed");
     return true;
 }
 
@@ -802,6 +817,8 @@ json_object* CalibreProtocol::metadataToJson(const BookMetadata& metadata) {
 }
 
 bool CalibreProtocol::handleSendBook(json_object* args) {
+    logProto("Starting handleSendBook");
+    
     json_object* metadataObj = NULL;
     json_object* lpathObj = NULL;
     json_object* lengthObj = NULL;
@@ -816,23 +833,27 @@ bool CalibreProtocol::handleSendBook(json_object* args) {
     currentBookLength = json_object_get_int64(lengthObj);
     currentBookReceived = 0;
     
+    logProto("Receiving book: %s (%lld bytes)", currentBookLpath.c_str(), currentBookLength);
+    
     BookMetadata metadata = jsonToMetadata(metadataObj);
     metadata.lpath = currentBookLpath;
     metadata.size = currentBookLength;
     
     std::string filePath = bookManager->getBookFilePath(currentBookLpath);
+    logProto("Target path: %s", filePath.c_str());
     
     size_t pos = filePath.rfind('/');
     if (pos != std::string::npos) {
         std::string dir = filePath.substr(0, pos);
         if (recursiveMkdir(dir) != 0) {
+            logProto("Failed to create directory structure for book");
             return sendErrorResponse("Failed to create directory");
         }
     }
     
-    // Using iv_fopen
     currentBookFile = iv_fopen(filePath.c_str(), "wb");
     if (!currentBookFile) {
+        logProto("Failed to open file for writing!");
         return sendErrorResponse("Failed to create book file");
     }
     
@@ -840,29 +861,32 @@ bool CalibreProtocol::handleSendBook(json_object* args) {
     json_object_object_add(response, "lpath", json_object_new_string(currentBookLpath.c_str()));
     
     if (!sendOKResponse(response)) {
+        logProto("Failed to send OK response");
         freeJSON(response);
-        iv_fclose(currentBookFile); // Using iv_fclose
+        iv_fclose(currentBookFile);
         currentBookFile = nullptr;
         return false;
     }
     freeJSON(response);
     
-    // OPTIMIZATION: Increased buffer size
-    const size_t CHUNK_SIZE = 65536;
+    const size_t CHUNK_SIZE = 4096;
     std::vector<char> buffer(CHUNK_SIZE);
+    
+    logProto("Starting binary transfer...");
     
     while (currentBookReceived < currentBookLength) {
         size_t toRead = std::min((size_t)(currentBookLength - currentBookReceived), CHUNK_SIZE);
         
         if (!network->receiveBinaryData(buffer.data(), toRead)) {
+            logProto("Network error during file transfer");
             iv_fclose(currentBookFile);
             currentBookFile = nullptr;
             return false;
         }
         
-        // Using iv_fwrite
-        size_t written = iv_fwrite(buffer.data(), 1, toRead, currentBookFile);
+        size_t written = fwrite(buffer.data(), 1, toRead, currentBookFile);
         if (written != toRead) {
+            logProto("Disk write error");
             iv_fclose(currentBookFile);
             currentBookFile = nullptr;
             return sendErrorResponse("Failed to write book data");
@@ -871,6 +895,7 @@ bool CalibreProtocol::handleSendBook(json_object* args) {
         currentBookReceived += toRead;
     }
     
+    logProto("Transfer complete.");
     iv_fclose(currentBookFile);
     currentBookFile = nullptr;
     
@@ -882,6 +907,7 @@ bool CalibreProtocol::handleSendBook(json_object* args) {
     }
     
     booksReceivedInSession++;
+    logProto("Book added to DB and cache.");
     
     return true;
 }
@@ -893,6 +919,9 @@ bool CalibreProtocol::handleSendBookMetadata(json_object* args) {
     }
     
     BookMetadata metadata = jsonToMetadata(dataObj);
+    
+    logProto("Syncing metadata for: %s (Read: %d, Date: %s)", 
+             metadata.title.c_str(), metadata.isRead, metadata.lastReadDate.c_str());
     
     if (bookManager->updateBookSync(metadata)) {
         // Update session cache
@@ -909,6 +938,8 @@ bool CalibreProtocol::handleSendBookMetadata(json_object* args) {
         if (cacheManager) {
             cacheManager->updateCache(metadata);
         }
+    } else {
+        logProto("Warning: Attempted to sync metadata for non-existent book");
     }
     
     return true;
@@ -949,15 +980,14 @@ bool CalibreProtocol::handleGetBookFileSegment(json_object* args) {
     std::string lpath = json_object_get_string(lpathObj);
     std::string filePath = bookManager->getBookFilePath(lpath);
     
-    // Using iv_fopen
     FILE* file = iv_fopen(filePath.c_str(), "rb");
     if (!file) {
         return sendErrorResponse("Failed to open book file");
     }
     
-    iv_fseek(file, 0, SEEK_END); // Using iv_fseek
-    long fileLength = iv_ftell(file); // Using iv_ftell
-    iv_fseek(file, 0, SEEK_SET);
+    fseek(file, 0, SEEK_END);
+    long fileLength = ftell(file);
+    fseek(file, 0, SEEK_SET);
     
     json_object* response = json_object_new_object();
     json_object_object_add(response, "fileLength", json_object_new_int64(fileLength));
@@ -969,13 +999,11 @@ bool CalibreProtocol::handleGetBookFileSegment(json_object* args) {
     }
     freeJSON(response);
     
-    // OPTIMIZATION: Increased buffer size
-    const size_t CHUNK_SIZE = 65536;
+    const size_t CHUNK_SIZE = 4096;
     std::vector<char> buffer(CHUNK_SIZE);
     
     while (!feof(file)) {
-        // Using iv_fread
-        size_t read = iv_fread(buffer.data(), 1, CHUNK_SIZE, file);
+        size_t read = fread(buffer.data(), 1, CHUNK_SIZE, file);
         if (read > 0) {
             if (!network->sendBinaryData(buffer.data(), read)) {
                 iv_fclose(file);
@@ -1003,6 +1031,7 @@ bool CalibreProtocol::handleNoop(json_object* args) {
     json_object* val = NULL;
     
     if (json_object_object_get_ex(args, "ejecting", &val) && json_object_get_boolean(val)) {
+        logProto("Received Eject command");
         json_object* response = json_object_new_object();
         sendOKResponse(response);
         freeJSON(response);
@@ -1011,6 +1040,7 @@ bool CalibreProtocol::handleNoop(json_object* args) {
     
     if (json_object_object_get_ex(args, "priKey", &val)) {
         int index = json_object_get_int(val);
+        logProto("Calibre requested details for book index: %d", index);
         
         if (index >= 0 && index < (int)sessionBooks.size()) {
             json_object* bookJson = metadataToJson(sessionBooks[index]);
@@ -1022,6 +1052,7 @@ bool CalibreProtocol::handleNoop(json_object* args) {
             sendOKResponse(bookJson);
             freeJSON(bookJson);
         } else {
+            logProto("Error: Requested priKey %d out of bounds", index);
             json_object* resp = json_object_new_object();
             sendOKResponse(resp);
             freeJSON(resp);
@@ -1030,6 +1061,7 @@ bool CalibreProtocol::handleNoop(json_object* args) {
     }
     
     if (json_object_object_get_ex(args, "count", &val)) {
+        logProto("Received batch count notification, ignoring response");
         return true;
     }
     
