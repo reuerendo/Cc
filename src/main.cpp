@@ -515,7 +515,7 @@ int mainEventHandler(int type, int par1, int par2) {
             SoftUpdate();
             
             ClearTimer((iv_timerproc)finalSyncMessageTimer);
-            SetWeakTimer("SyncFinalize", (iv_timerproc)finalSyncMessageTimer, 1000);
+            SetWeakTimer("SyncFinalize", (iv_timerproc)finalSyncMessageTimer, 100);
             
             break;
         }
@@ -534,12 +534,12 @@ int mainEventHandler(int type, int par1, int par2) {
             SoftUpdate();
             break;
             
-        case EVT_KEYPRESS:
-            if (par1 == IV_KEY_BACK || par1 == IV_KEY_PREV) {
-                performExit();
-                return 1;
-            }
-            break;
+        // case EVT_KEYPRESS:
+            // if (par1 == IV_KEY_BACK || par1 == IV_KEY_PREV) {
+                // performExit();
+                // return 1;
+            // }
+            // break;
 
         case EVT_EXIT:
             if (!exitRequested) {
