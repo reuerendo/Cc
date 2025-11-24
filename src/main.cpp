@@ -14,6 +14,7 @@
 // Custom events
 #define EVT_USER_UPDATE 20001
 #define EVT_CONNECTION_FAILED 20002
+#define EVT_BOOK_RECEIVED 20004
 #define EVT_SHOW_TOAST 20005
 
 // Toast types
@@ -260,6 +261,10 @@ void* connectionThreadFunc(void* arg) {
     SendEvent(mainEventHandler, EVT_SHOW_TOAST, TOAST_CONNECTED, 0);
     
     protocol->handleMessages([](const std::string& status) {
+        if (status == "BOOK_SAVED") {
+            int count = protocol->getBooksReceivedCount();
+            SendEvent(mainEventHandler, EVT_BOOK_RECEIVED, count, 0);
+        }
         // No logging for intermediate statuses to reduce spam
     });
     
@@ -465,6 +470,11 @@ int mainEventHandler(int type, int par1, int par2) {
                    connectionErrorBuffer,
                    "Retry", "Cancel", 
                    retryConnectionHandler);
+            break;
+
+        case EVT_BOOK_RECEIVED:
+            // Book received notification - par1 contains count
+            logMsg("Books received: %d", par1);
             break;
 
         case EVT_SHOW_TOAST:
