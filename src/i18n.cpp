@@ -133,8 +133,16 @@ static LanguageCode mapPocketbookLanguage(const char* lang) {
 }
 
 void i18n_init() {
-    // Get system language from Pocketbook (returns const char*, e.g., "ru", "en")
-    const char* systemLang = currentLang();
+    const char* systemLang = "en";
+    
+    // Получаем глобальную конфигурацию
+    iconfig *globalCfg = GetGlobalConfig();
+    
+    // Если конфиг доступен, читаем параметр "language", по умолчанию "en"
+    if (globalCfg) {
+        systemLang = ReadString(globalCfg, "language", "en");
+    }
+
     currentLanguage = mapPocketbookLanguage(systemLang);
 }
 
