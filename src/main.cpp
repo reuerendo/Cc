@@ -44,7 +44,7 @@ static const char *DEFAULT_READ_DATE_COLUMN = "#read_date";
 static const char *DEFAULT_FAVORITE_COLUMN = "#favorite";
 
 // Toast messages
-static const char *MSG_CONNECTED = "Connected Successfully";
+static const char *MSG_CONNECTED = "Connected";
 static const char *MSG_DISCONNECTED = "Disconnected";
 static const char *MSG_WIFI_FAILED = "Could not connect to WiFi network.";
 static const char *MSG_CALIBRE_CONNECT_FAILED = "Failed to connect to Calibre server.\nPlease check IP address and port.";
@@ -393,7 +393,7 @@ void saveAndCloseConfig() {
     }
 }
 
-void configSaveHandler() {
+void configItemChangedHandler(char *name) {
     if (appConfig) SaveConfig(appConfig);
 }
 
@@ -415,7 +415,7 @@ void showMainScreen() {
         appConfig,
         configItems,
         configCloseHandler,
-        configSaveHandler
+        configItemChangedHandler
     );
 }
 
