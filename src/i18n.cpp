@@ -43,7 +43,7 @@ static const char* translations[][STR_COUNT] = {
         "Подключено",                      // STR_CONNECTED
         "Отключено",                       // STR_DISCONNECTED
         "Синхронизация завершена",         // STR_SYNC_COMPLETE
-        "Передача файлов синхронизация завершена", // STR_BATCH_SYNC_FINISHED
+        "Передача файлов синхронизации завершена", // STR_BATCH_SYNC_FINISHED
         "книга",                           // STR_BOOK_SINGULAR
         "книг",                            // STR_BOOKS_PLURAL
         "Получение...",                    // STR_RECEIVING
@@ -112,24 +112,35 @@ static const char* translations[][STR_COUNT] = {
 
 static LanguageCode currentLanguage = LANG_ENGLISH;
 
-// Map Pocketbook language codes to our enum
-static LanguageCode mapPocketbookLanguage(int pbLang) {
-    switch (pbLang) {
-        case 2:  // Russian
-            return LANG_RUSSIAN;
-        case 27: // Ukrainian
-            return LANG_UKRAINIAN;
-        case 7:  // Spanish
-            return LANG_SPANISH;
-        default:
-            return LANG_ENGLISH;
+// Map system language name to our enum
+static LanguageCode mapLanguage(const char* langName) {
+    if (!langName) {
+        return LANG_ENGLISH;
     }
+    
+    // Check for Russian
+    if (strncmp(langName, "ru", 2) == 0 || strncmp(langName, "RU", 2) == 0) {
+        return LANG_RUSSIAN;
+    }
+    
+    // Check for Ukrainian
+    if (strncmp(langName, "uk", 2) == 0 || strncmp(langName, "UK", 2) == 0 ||
+        strncmp(langName, "ua", 2) == 0 || strncmp(langName, "UA", 2) == 0) {
+        return LANG_UKRAINIAN;
+    }
+    
+    // Check for Spanish
+    if (strncmp(langName, "es", 2) == 0 || strncmp(langName, "ES", 2) == 0) {
+        return LANG_SPANISH;
+    }
+    
+    return LANG_ENGLISH;
 }
 
 void i18n_init() {
-    // Get system language from Pocketbook
-    int systemLang = GetLang();
-    currentLanguage = mapPocketbookLanguage(systemLang);
+    // Get current system language
+    const char* langName = currentLang();
+    currentLanguage = mapLanguage(langName);
 }
 
 const char* i18n_get(StringId id) {
