@@ -515,14 +515,14 @@ int mainEventHandler(int type, int par1, int par2) {
             SoftUpdate();
             
             ClearTimer((iv_timerproc)finalSyncMessageTimer);
-            SetWeakTimer("SyncFinalize", (iv_timerproc)finalSyncMessageTimer, 500);
+            SetWeakTimer("SyncFinalize", (iv_timerproc)finalSyncMessageTimer, 1000);
             
             break;
         }
 
         case EVT_SHOW_TOAST:
             if (par1 == TOAST_CONNECTED) {
-                Message(ICON_INFORMATION, "Calibre", "Connected Successfully", 2000);
+                Message(ICON_INFORMATION, "Calibre", "Connected", 2000);
                 updateConnectionStatus("Connected (Idle)");
             } else if (par1 == TOAST_DISCONNECTED) {
                 Message(ICON_INFORMATION, "Calibre", "Disconnected", 2000);
