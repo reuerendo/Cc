@@ -1009,13 +1009,14 @@ bool CalibreProtocol::handleDeleteBook(json_object* args) {
     int count = json_object_array_length(lpathsObj);
     logProto(LOG_INFO, "Deleting %d book(s)", count);
     
+    // First, collect all UUIDs before deletion
+    std::vector<std::pair<std::string, std::string>> booksToDelete; // lpath, uuid
+    
     for (int i = 0; i < count; i++) {
         json_object* lpathObj = json_object_array_get_idx(lpathsObj, i);
         std::string lpath = json_object_get_string(lpathObj);
         
-        logProto(LOG_DEBUG, "Deleting book %d/%d: %s", i+1, count, lpath.c_str());
-        
-        // Find UUID before deletion for response
+        // Find UUID before deletion
         std::string deletedUuid = "";
         for (const auto& book : sessionBooks) {
             if (book.lpath == lpath) {
@@ -1028,6 +1029,26 @@ bool CalibreProtocol::handleDeleteBook(json_object* args) {
         if (deletedUuid.empty() && cacheManager) {
             deletedUuid = cacheManager->getUuidForLpath(lpath);
         }
+        
+        booksToDelete.push_back(std::make_pair(lpath, deletedUuid));
+    }
+    
+    // Send initial OK response to acknowledge the DELETE_BOOK command
+    json_object* initialResponse = json_object_new_object();
+    if (!sendOKResponse(initialResponse)) {
+        freeJSON(initialResponse);
+        logProto(LOG_ERROR, "Failed to send initial delete acknowledgment");
+        return false;
+    }
+    freeJSON(initialResponse);
+    logProto(LOG_DEBUG, "Sent initial DELETE_BOOK acknowledgment");
+    
+    // Now perform actual deletion and send individual responses
+    for (size_t i = 0; i < booksToDelete.size(); i++) {
+        const std::string& lpath = booksToDelete[i].first;
+        const std::string& uuid = booksToDelete[i].second;
+        
+        logProto(LOG_DEBUG, "Deleting book %d/%d: %s", (int)i+1, count, lpath.c_str());
         
         // Perform deletion
         bookManager->deleteBook(lpath);
@@ -1047,16 +1068,17 @@ bool CalibreProtocol::handleDeleteBook(json_object* args) {
         // Send individual response for each deleted book
         json_object* response = json_object_new_object();
         json_object_object_add(response, "uuid", 
-            json_object_new_string(deletedUuid.empty() ? "" : deletedUuid.c_str()));
+            json_object_new_string(uuid.empty() ? "" : uuid.c_str()));
         
         if (!sendOKResponse(response)) {
             freeJSON(response);
-            logProto(LOG_ERROR, "Failed to send delete confirmation for book %d", i+1);
+            logProto(LOG_ERROR, "Failed to send delete confirmation for book %d", (int)i+1);
             return false;
         }
         freeJSON(response);
         
-        logProto(LOG_DEBUG, "Delete confirmation sent for book %d/%d", i+1, count);
+        logProto(LOG_DEBUG, "Delete confirmation sent for book %d/%d (UUID: %s)", 
+                (int)i+1, count, uuid.c_str());
     }
     
     logProto(LOG_INFO, "Successfully deleted %d book(s)", count);
