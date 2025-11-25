@@ -251,14 +251,16 @@ void connectionThreadFunc(ConnectionConfig config) {
     std::fill(config.password.begin(), config.password.end(), 0);
     
 	protocol->handleMessages([](const std::string& status) {
-		if (status == "BOOK_SAVED") {
-			int count = protocol->getBooksReceivedCount();
-			SendEvent(mainEventHandler, EVT_BOOK_RECEIVED, count, 0);
-		} else if (status == "BATCH_COMPLETE") {
-			int count = protocol->getBooksReceivedCount();
-			SendEvent(mainEventHandler, EVT_BATCH_COMPLETE, count, 0);
-		}
-	});
+			if (status.find("Received book") == 0) {
+				// Individual book received
+				int count = protocol->getBooksReceivedCount();
+				SendEvent(mainEventHandler, EVT_BOOK_RECEIVED, count, 0);
+			} else if (status == "BATCH_COMPLETE") {
+				// All books in batch completed
+				int count = protocol->getBooksReceivedCount();
+				SendEvent(mainEventHandler, EVT_BATCH_COMPLETE, count, 0);
+			}
+		});
     
     logMsg("Disconnecting");
     

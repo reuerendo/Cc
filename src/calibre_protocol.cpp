@@ -390,7 +390,9 @@ void CalibreProtocol::handleMessages(std::function<void(const std::string&)> sta
             case SEND_BOOK:
                 handlerSuccess = handleSendBook(args);
                 if (handlerSuccess) {
-                    statusCallback("BOOK_SAVED");
+                    // Notify UI about received book count
+                    std::string status = "Received book " + std::to_string(booksReceivedInSession);
+                    statusCallback(status);
                 } else {
                     logProto(LOG_ERROR, "Failed to receive book");
                 }
@@ -426,8 +428,8 @@ void CalibreProtocol::handleMessages(std::function<void(const std::string&)> sta
                 }
                 freeJSON(doneResponse);
                 
-                // Notify UI
-                if (handlerSuccess) {
+                // Notify UI about batch completion
+                if (handlerSuccess && booksReceivedInSession > 0) {
                     statusCallback("BATCH_COMPLETE");
                 }
                 break;
