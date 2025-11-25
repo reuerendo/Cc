@@ -24,6 +24,7 @@
 #define EVT_CONNECTION_FAILED 20002
 #define EVT_BOOK_RECEIVED 20004
 #define EVT_SHOW_TOAST 20005
+#define EVT_BATCH_COMPLETE 20006
 
 // Toast types
 #define TOAST_CONNECTED 2
@@ -128,7 +129,6 @@ static std::atomic<bool> exitRequested(false);
 
 static std::mutex bookCountMutex;
 static int booksReceivedCount = 0;
-static bool syncMessageShown = false;
 
 // --- Helper Struct for Thread Safety ---
 // Holds a copy of config data so the worker thread doesn't access 'appConfig'
@@ -207,7 +207,6 @@ void connectionThreadFunc(ConnectionConfig config) {
     logMsg("Connecting to %s:%d", config.ip.c_str(), config.port);
     
     booksReceivedCount = 0;
-    syncMessageShown = false;
     
     if (shouldStop) {
         isConnecting = false;
@@ -251,13 +250,15 @@ void connectionThreadFunc(ConnectionConfig config) {
     // Clean password from memory for security
     std::fill(config.password.begin(), config.password.end(), 0);
     
-    protocol->handleMessages([](const std::string& status) {
-        if (status == "BOOK_SAVED") {
-            // Safe to access protocol via pointer here as thread owns the lifecycle until disconnect
-            int count = protocol->getBooksReceivedCount();
-            SendEvent(mainEventHandler, EVT_BOOK_RECEIVED, count, 0);
-        }
-    });
+	protocol->handleMessages([](const std::string& status) {
+			if (status == "BOOK_RECEIVED") {
+				int count = protocol->getBooksReceivedCount();
+				SendEvent(mainEventHandler, EVT_BOOK_RECEIVED, count, 0);
+			} else if (status == "BATCH_COMPLETE") {
+				int count = protocol->getBooksReceivedCount();
+				SendEvent(mainEventHandler, EVT_BATCH_COMPLETE, count, 0);
+			}
+		});
     
     logMsg("Disconnecting");
     
@@ -435,39 +436,9 @@ void updateConnectionStatus(const char* status) {
     // Optional: Draw status on screen if UI requires it
 }
 
-void finalSyncMessageTimer() {
-    ClearTimer((iv_timerproc)finalSyncMessageTimer);
-    
-    if (syncMessageShown) return;
-    
-    logMsg("Timer fired: Batch sync finished");
-    syncMessageShown = true;
-    
-    char msgBuffer[256];
-    const char* booksWord = (booksReceivedCount == 1) ? 
-                            i18n_get(STR_BOOK_SINGULAR) : 
-                            i18n_get(STR_BOOKS_PLURAL);
-    
-    snprintf(msgBuffer, sizeof(msgBuffer),
-             "%s.\n%s: %d %s.",
-             i18n_get(STR_BATCH_SYNC_FINISHED),
-             i18n_get(STR_TOTAL_RECEIVED),
-             booksReceivedCount,
-             booksWord);
-    
-    Message(ICON_INFORMATION, i18n_get(STR_SYNC_COMPLETE), msgBuffer, 4000);
-    
-    updateConnectionStatus(i18n_get(STR_CONNECTED_IDLE));
-    SoftUpdate();
-}
-
 void performExit() {
     if (exitRequested) return;
     exitRequested = true;
-    
-    // 1. Stop Timers
-    ClearTimer((iv_timerproc)connectionTimerFunc);
-    ClearTimer((iv_timerproc)finalSyncMessageTimer);
     
     // 2. Stop Network & Thread
     stopConnection();
@@ -525,26 +496,45 @@ int mainEventHandler(int type, int par1, int par2) {
                    retryConnectionHandler);
             break;
 
-        case EVT_BOOK_RECEIVED: {
-            int count = par1;
-            booksReceivedCount = count;
-            syncMessageShown = false;
-            
-            const char* booksWord = (count == 1) ? 
-                                    i18n_get(STR_BOOK_SINGULAR) : 
-                                    i18n_get(STR_BOOKS_PLURAL);
-            
-            char statusBuffer[128];
-            snprintf(statusBuffer, sizeof(statusBuffer), "%s (%d %s)",
-                     i18n_get(STR_RECEIVING), count, booksWord);
-            updateConnectionStatus(statusBuffer);
-            SoftUpdate();
-            
-            // Debounce the completion message
-            ClearTimer((iv_timerproc)finalSyncMessageTimer);
-            SetWeakTimer("SyncFinalize", (iv_timerproc)finalSyncMessageTimer, 1000);
-            break;
-        }
+			case EVT_BOOK_RECEIVED: {
+				int count = par1;
+				booksReceivedCount = count;
+				
+				const char* booksWord = (count == 1) ? 
+										i18n_get(STR_BOOK_SINGULAR) : 
+										i18n_get(STR_BOOKS_PLURAL);
+				
+				char statusBuffer[128];
+				snprintf(statusBuffer, sizeof(statusBuffer), "%s (%d %s)",
+						 i18n_get(STR_RECEIVING), count, booksWord);
+				updateConnectionStatus(statusBuffer);
+				SoftUpdate();
+				break;
+			}
+
+			case EVT_BATCH_COMPLETE: {
+				int count = par1;
+				
+				if (count > 0) {
+					const char* booksWord = (count == 1) ? 
+											i18n_get(STR_BOOK_SINGULAR) : 
+											i18n_get(STR_BOOKS_PLURAL);
+					
+					char msgBuffer[256];
+					snprintf(msgBuffer, sizeof(msgBuffer),
+							 "%s.\n%s: %d %s.",
+							 i18n_get(STR_BATCH_SYNC_FINISHED),
+							 i18n_get(STR_TOTAL_RECEIVED),
+							 count,
+							 booksWord);
+					
+					Message(ICON_INFORMATION, i18n_get(STR_SYNC_COMPLETE), msgBuffer, 4000);
+				}
+				
+				updateConnectionStatus(i18n_get(STR_CONNECTED_IDLE));
+				SoftUpdate();
+				break;
+			}
 
         case EVT_SHOW_TOAST:
             if (par1 == TOAST_CONNECTED) {
