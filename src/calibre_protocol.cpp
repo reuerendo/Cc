@@ -335,7 +335,10 @@ void CalibreProtocol::handleMessages(std::function<void(const std::string&)> sta
         
         if (!network->receiveJSON(opcode, jsonData)) {
             if (network->isConnected()) {
+                logProto(LOG_ERROR, "Failed to receive message");
                 errorMessage = "Connection lost";
+            } else {
+                logProto(LOG_INFO, "Clean connection close");
             }
             connected = false;
             break;
@@ -345,74 +348,93 @@ void CalibreProtocol::handleMessages(std::function<void(const std::string&)> sta
         
         json_object* args = parseJSON(jsonData);
         if (!args) {
+            logProto(LOG_ERROR, "Failed to parse JSON for opcode %d", (int)opcode);
             sendErrorResponse("Failed to parse request");
             continue;
         }
         
         bool shouldDisconnect = false;
+        bool handlerSuccess = true;
         
         switch (opcode) {
             case SET_CALIBRE_DEVICE_INFO:
-                handleSetCalibreInfo(args);
+                handlerSuccess = handleSetCalibreInfo(args);
                 statusCallback("Received device info");
                 break;
                 
             case FREE_SPACE:
-                handleFreeSpace(args);
+                handlerSuccess = handleFreeSpace(args);
                 statusCallback("Sent free space info");
                 break;
                 
             case TOTAL_SPACE:
-                handleTotalSpace(args);
+                handlerSuccess = handleTotalSpace(args);
                 statusCallback("Sent total space info");
                 break;
                 
             case SET_LIBRARY_INFO:
-                handleSetLibraryInfo(args);
+                handlerSuccess = handleSetLibraryInfo(args);
                 statusCallback("Received library info");
                 break;
                 
             case GET_BOOK_COUNT:
-                handleGetBookCount(args);
+                handlerSuccess = handleGetBookCount(args);
                 statusCallback("Sent book count");
                 break;
                 
             case SEND_BOOKLISTS:
-                handleSendBooklists(args);
+                handlerSuccess = handleSendBooklists(args);
                 statusCallback("Processing booklists");
                 break;
                 
             case SEND_BOOK:
-                handleSendBook(args);
-                statusCallback("BOOK_SAVED");
+                handlerSuccess = handleSendBook(args);
+                if (handlerSuccess) {
+                    statusCallback("BOOK_SAVED");
+                } else {
+                    logProto(LOG_ERROR, "Failed to receive book");
+                }
                 break;
                 
             case SEND_BOOK_METADATA:
-                handleSendBookMetadata(args);
+                handlerSuccess = handleSendBookMetadata(args);
                 statusCallback("Received book metadata");
                 break;
                 
             case DELETE_BOOK:
-                handleDeleteBook(args);
+                handlerSuccess = handleDeleteBook(args);
                 statusCallback("Deleted book");
                 break;
                 
             case GET_BOOK_FILE_SEGMENT:
-                handleGetBookFileSegment(args);
+                handlerSuccess = handleGetBookFileSegment(args);
                 statusCallback("Sent book file");
                 break;
                 
             case DISPLAY_MESSAGE:
-                handleDisplayMessage(args);
+                handlerSuccess = handleDisplayMessage(args);
                 break;
                 
-            case BOOK_DONE:
-				logProto(LOG_INFO, "Received BOOK_DONE - batch transfer complete");
-				statusCallback("BATCH_COMPLETE");
-				break;
+            case BOOK_DONE: {
+                logProto(LOG_INFO, "Received BOOK_DONE - batch transfer complete");
+                
+                // Send acknowledgment for BOOK_DONE
+                json_object* doneResponse = json_object_new_object();
+                if (!sendOKResponse(doneResponse)) {
+                    logProto(LOG_ERROR, "Failed to acknowledge BOOK_DONE");
+                    handlerSuccess = false;
+                }
+                freeJSON(doneResponse);
+                
+                // Notify UI
+                if (handlerSuccess) {
+                    statusCallback("BATCH_COMPLETE");
+                }
+                break;
+            }
                 
             case NOOP: {
-                handleNoop(args);
+                handlerSuccess = handleNoop(args);
                 json_object* ejectingObj = NULL;
                 json_object_object_get_ex(args, "ejecting", &ejectingObj);
                 if (ejectingObj && json_object_get_boolean(ejectingObj)) {
@@ -424,10 +446,15 @@ void CalibreProtocol::handleMessages(std::function<void(const std::string&)> sta
             default:
                 logProto(LOG_ERROR, "Unexpected opcode: %d", (int)opcode);
                 sendErrorResponse("Unexpected opcode");
+                handlerSuccess = false;
                 break;
         }
         
         freeJSON(args);
+        
+        if (!handlerSuccess) {
+            logProto(LOG_ERROR, "Handler failed for opcode %d", (int)opcode);
+        }
         
         if (shouldDisconnect) {
             connected = false;
