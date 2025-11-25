@@ -329,6 +329,8 @@ bool CalibreProtocol::performHandshake(const std::string& password) {
 }
 
 void CalibreProtocol::handleMessages(std::function<void(const std::string&)> statusCallback) {
+    int lastBooklistCount = 0; // Track books before booklist sync
+    
     while (connected && network->isConnected()) {
         CalibreOpcode opcode;
         std::string jsonData;
@@ -380,19 +382,27 @@ void CalibreProtocol::handleMessages(std::function<void(const std::string&)> sta
             case GET_BOOK_COUNT:
                 handlerSuccess = handleGetBookCount(args);
                 statusCallback("Sent book count");
+                lastBooklistCount = booksReceivedInSession; // Remember count before potential transfers
                 break;
                 
-            case SEND_BOOKLISTS:
+            case SEND_BOOKLISTS: {
                 handlerSuccess = handleSendBooklists(args);
                 statusCallback("Processing booklists");
+                
+                // Check if books were received since last GET_BOOK_COUNT
+                int newBooks = booksReceivedInSession - lastBooklistCount;
+                if (newBooks > 0) {
+                    logProto(LOG_INFO, "Book transfer batch complete: %d new books", newBooks);
+                    statusCallback("BATCH_COMPLETE");
+                    lastBooklistCount = booksReceivedInSession;
+                }
                 break;
+            }
                 
             case SEND_BOOK:
                 handlerSuccess = handleSendBook(args);
                 if (handlerSuccess) {
-                    // Notify UI about received book count
-                    std::string status = "Received book " + std::to_string(booksReceivedInSession);
-                    statusCallback(status);
+                    statusCallback("BOOK_RECEIVED");
                 } else {
                     logProto(LOG_ERROR, "Failed to receive book");
                 }
@@ -416,24 +426,6 @@ void CalibreProtocol::handleMessages(std::function<void(const std::string&)> sta
             case DISPLAY_MESSAGE:
                 handlerSuccess = handleDisplayMessage(args);
                 break;
-                
-            case BOOK_DONE: {
-                logProto(LOG_INFO, "Received BOOK_DONE - batch transfer complete");
-                
-                // Send acknowledgment for BOOK_DONE
-                json_object* doneResponse = json_object_new_object();
-                if (!sendOKResponse(doneResponse)) {
-                    logProto(LOG_ERROR, "Failed to acknowledge BOOK_DONE");
-                    handlerSuccess = false;
-                }
-                freeJSON(doneResponse);
-                
-                // Notify UI about batch completion
-                if (handlerSuccess && booksReceivedInSession > 0) {
-                    statusCallback("BATCH_COMPLETE");
-                }
-                break;
-            }
                 
             case NOOP: {
                 handlerSuccess = handleNoop(args);
