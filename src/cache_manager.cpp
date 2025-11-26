@@ -224,6 +224,7 @@ bool CacheManager::saveCache() {
     
     LOG_CACHE("Cache saved successfully (streaming write)");
     return true;
+}
 
 std::string CacheManager::getUuidForLpath(const std::string& lpath) const {
     auto it = cacheData.find(lpath);
