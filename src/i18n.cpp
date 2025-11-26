@@ -13,6 +13,7 @@ static const char* translations[][STR_COUNT] = {
         "     Read Status Column",         // STR_READ_COLUMN
         "     Read Date Column",           // STR_READ_DATE_COLUMN
         "     Favorite Column",            // STR_FAVORITE_COLUMN
+        "     Enable Logging",             // STR_ENABLE_LOG
         "Connection Failed",               // STR_CONNECTION_FAILED
         "Connected",                       // STR_CONNECTED
         "Disconnected",                    // STR_DISCONNECTED
@@ -28,7 +29,9 @@ static const char* translations[][STR_COUNT] = {
         "Please check IP address and port",    // STR_CHECK_IP_PORT
         "Handshake failed",                // STR_HANDSHAKE_FAILED
         "Could not connect to WiFi network",   // STR_WIFI_CONNECT_FAILED
-        "Total received"                   // STR_TOTAL_RECEIVED
+        "Total received",                  // STR_TOTAL_RECEIVED
+        "Off",                             // STR_OFF
+        "On"                               // STR_ON
     },
     // Russian
     {
@@ -37,8 +40,9 @@ static const char* translations[][STR_COUNT] = {
         "     Порт",                       // STR_PORT
         "     Пароль",                     // STR_PASSWORD
         "     Столбец статуса чтения",     // STR_READ_COLUMN
-        "     Столбец даты прочтения",        // STR_READ_DATE_COLUMN
+        "     Столбец даты прочтения",     // STR_READ_DATE_COLUMN
         "     Столбец избранного",         // STR_FAVORITE_COLUMN
+        "     Включить лог",               // STR_ENABLE_LOG
         "Ошибка подключения",              // STR_CONNECTION_FAILED
         "Подключено",                      // STR_CONNECTED
         "Отключено",                       // STR_DISCONNECTED
@@ -54,7 +58,9 @@ static const char* translations[][STR_COUNT] = {
         "Проверьте IP-адрес и порт",       // STR_CHECK_IP_PORT
         "Ошибка рукопожатия",              // STR_HANDSHAKE_FAILED
         "Не удалось подключиться к WiFi сети", // STR_WIFI_CONNECT_FAILED
-        "Всего получено"                   // STR_TOTAL_RECEIVED
+        "Всего получено",                  // STR_TOTAL_RECEIVED
+        "Выкл",                            // STR_OFF
+        "Вкл"                              // STR_ON
     },
     // Ukrainian
     {
@@ -65,6 +71,7 @@ static const char* translations[][STR_COUNT] = {
         "     Колонка статусу читання",    // STR_READ_COLUMN
         "     Колонка дати читання",       // STR_READ_DATE_COLUMN
         "     Колонка улюбленого",         // STR_FAVORITE_COLUMN
+        "     Увімкнути лог",              // STR_ENABLE_LOG
         "Помилка підключення",             // STR_CONNECTION_FAILED
         "Підключено",                      // STR_CONNECTED
         "Відключено",                      // STR_DISCONNECTED
@@ -80,7 +87,9 @@ static const char* translations[][STR_COUNT] = {
         "Перевірте IP-адресу та порт",     // STR_CHECK_IP_PORT
         "Помилка рукостискання",           // STR_HANDSHAKE_FAILED
         "Не вдалося підключитися до WiFi мережі", // STR_WIFI_CONNECT_FAILED
-        "Всього отримано"                  // STR_TOTAL_RECEIVED
+        "Всього отримано",                 // STR_TOTAL_RECEIVED
+        "Вимк",                            // STR_OFF
+        "Увімк"                            // STR_ON
     },
     // Spanish
     {
@@ -91,6 +100,7 @@ static const char* translations[][STR_COUNT] = {
         "     Columna de estado de lectura", // STR_READ_COLUMN
         "     Columna de fecha de lectura",  // STR_READ_DATE_COLUMN
         "     Columna de favoritos",       // STR_FAVORITE_COLUMN
+        "     Habilitar el registro",      // STR_ENABLE_LOG
         "Error de conexión",               // STR_CONNECTION_FAILED
         "Conectado",                       // STR_CONNECTED
         "Desconectado",                    // STR_DISCONNECTED
@@ -106,7 +116,9 @@ static const char* translations[][STR_COUNT] = {
         "Verifique la dirección IP y el puerto",   // STR_CHECK_IP_PORT
         "Error de handshake",              // STR_HANDSHAKE_FAILED
         "No se pudo conectar a la red WiFi",       // STR_WIFI_CONNECT_FAILED
-        "Total recibido"                   // STR_TOTAL_RECEIVED
+        "Total recibido",                  // STR_TOTAL_RECEIVED
+        "Apagado",                         // STR_OFF
+        "Encendido"                        // STR_ON
     }
 };
 
@@ -135,10 +147,10 @@ static LanguageCode mapPocketbookLanguage(const char* lang) {
 void i18n_init() {
     const char* systemLang = "en";
     
-    // Получаем глобальную конфигурацию
+    // Get global configuration
     iconfig *globalCfg = GetGlobalConfig();
     
-    // Если конфиг доступен, читаем параметр "language", по умолчанию "en"
+    // If config is available, read "language" parameter, default "en"
     if (globalCfg) {
         systemLang = ReadString(globalCfg, "language", "en");
     }

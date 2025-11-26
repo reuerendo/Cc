@@ -22,6 +22,7 @@ typedef enum {
     STR_READ_COLUMN,
     STR_READ_DATE_COLUMN,
     STR_FAVORITE_COLUMN,
+    STR_ENABLE_LOG,
     STR_CONNECTION_FAILED,
     STR_CONNECTED,
     STR_DISCONNECTED,
@@ -38,6 +39,8 @@ typedef enum {
     STR_HANDSHAKE_FAILED,
     STR_WIFI_CONNECT_FAILED,
     STR_TOTAL_RECEIVED,
+    STR_OFF,
+    STR_ON,
     STR_COUNT
 } StringId;
 
@@ -58,3 +61,6 @@ LanguageCode i18n_get_language();
 #endif
 
 #endif // I18N_H
+
+
+

@@ -33,15 +33,18 @@
 #define MAX_LOG_SIZE (256 * 1024)
 
 // --- Logging System (Thread Safe) ---
+static std::atomic<bool> isLoggingEnabled(false);
 static FILE* logFile = NULL;
 static std::mutex logMutex; // Mutex for log file access
 
 void initLog() {
+    if (!isLoggingEnabled) return;
+
     const char* logPath = "/mnt/ext1/system/calibre-connect.log";
     
-    // Lock guard not strictly needed here if called from INIT only, 
-    // but good practice if re-initialized.
     std::lock_guard<std::mutex> lock(logMutex);
+
+    if (logFile) return;
 
     struct stat st;
     if (stat(logPath, &st) == 0) {
@@ -50,7 +53,6 @@ void initLog() {
         }
     }
 
-    // Using standard fopen for better compatibility across threads
     logFile = fopen(logPath, "a");
     if (logFile) {
         time_t now = time(NULL);
@@ -60,14 +62,11 @@ void initLog() {
 }
 
 void logMsg(const char* format, ...) {
+    if (!isLoggingEnabled) return;
+
     std::lock_guard<std::mutex> lock(logMutex);
     
-    if (!logFile) {
-        // Try to re-open if null, though usually initLog is called first
-        const char* logPath = "/mnt/ext1/system/calibre-connect.log";
-        logFile = fopen(logPath, "a");
-        if (!logFile) return;
-    }
+    if (!logFile) return;
     
     time_t now = time(NULL);
     struct tm* tm_info = localtime(&now);
@@ -105,6 +104,10 @@ static const char *KEY_READ_COLUMN = "read_column";
 static const char *KEY_READ_DATE_COLUMN = "read_date_column";
 static const char *KEY_FAVORITE_COLUMN = "favorite_column";
 
+// Log
+static const char *KEY_ENABLE_LOG = "enable_logging";
+static const char *DEFAULT_ENABLE_LOG = "0";
+
 // Default values
 static const char *DEFAULT_IP = "192.168.1.100";
 static const char *DEFAULT_PORT = "9090";
@@ -112,6 +115,11 @@ static const char *DEFAULT_PASSWORD = "";
 static const char *DEFAULT_READ_COLUMN = "#read";
 static const char *DEFAULT_READ_DATE_COLUMN = "#read_date";
 static const char *DEFAULT_FAVORITE_COLUMN = "#favorite";
+static const char* CHECKBOX_VARIANTS[] = {
+    NULL,
+    NULL,
+    NULL
+};
 
 // Global error message buffer
 static char connectionErrorBuffer[256] = "";
@@ -147,8 +155,13 @@ void startConnection();
 static iconfigedit* configItems = NULL;
 
 void initConfigItems() {
+	
+	CHECKBOX_VARIANTS[0] = i18n_get(STR_OFF);
+    CHECKBOX_VARIANTS[1] = i18n_get(STR_ON);
+    CHECKBOX_VARIANTS[2] = NULL; // Terminator
+	
     // Using calloc to ensure C-compatibility for InkView API
-    configItems = (iconfigedit*)calloc(7, sizeof(iconfigedit));
+    configItems = (iconfigedit*)calloc(8, sizeof(iconfigedit));
     
     configItems[0].type = CFG_IPADDR;
     configItems[0].text = strdup(i18n_get(STR_IP_ADDRESS));
@@ -179,17 +192,21 @@ void initConfigItems() {
     configItems[5].text = strdup(i18n_get(STR_FAVORITE_COLUMN));
     configItems[5].name = (char*)KEY_FAVORITE_COLUMN;
     configItems[5].deflt = (char*)DEFAULT_FAVORITE_COLUMN;
+	
+	configItems[6].type = CFG_INDEX;
+    configItems[6].text = strdup(i18n_get(STR_ENABLE_LOG));
+    configItems[6].name = (char*)KEY_ENABLE_LOG;
+    configItems[6].deflt = (char*)DEFAULT_ENABLE_LOG;
+    configItems[6].variants = (char**)CHECKBOX_VARIANTS;
     
     // Terminator
-    configItems[6].type = 0;
+    configItems[7].type = 0;
 }
 
 void freeConfigItems() {
     if (configItems) {
-        for (int i = 0; i < 6; i++) {
-            // Only free what we strdup'ed (names are static const char*)
+        for (int i = 0; i < 7; i++) {
             if (configItems[i].text) free(configItems[i].text);
-            // Hint: appConfig keys are static strings, no need to free .name
         }
         free(configItems);
         configItems = NULL;
@@ -392,7 +409,19 @@ void initConfig() {
             WriteString(appConfig, KEY_READ_COLUMN, DEFAULT_READ_COLUMN);
             WriteString(appConfig, KEY_READ_DATE_COLUMN, DEFAULT_READ_DATE_COLUMN);
             WriteString(appConfig, KEY_FAVORITE_COLUMN, DEFAULT_FAVORITE_COLUMN);
+			WriteString(appConfig, KEY_ENABLE_LOG, DEFAULT_ENABLE_LOG);
             SaveConfig(appConfig);
+        }
+    }
+	
+	if (appConfig) {
+        int logState = ReadInt(appConfig, KEY_ENABLE_LOG, atoi(DEFAULT_ENABLE_LOG));
+        isLoggingEnabled = (logState != 0);
+        
+        if (isLoggingEnabled) {
+            initLog();
+        } else {
+            closeLog();
         }
     }
 }
@@ -410,7 +439,26 @@ void configSaveHandler() {
 }
 
 void configItemChangedHandler(char *name) {
-    if (appConfig) SaveConfig(appConfig);
+    if (appConfig) {
+        SaveConfig(appConfig);
+
+        // Проверяем, изменилась ли настройка логов
+        if (strcmp(name, KEY_ENABLE_LOG) == 0) {
+            int logState = ReadInt(appConfig, KEY_ENABLE_LOG, 0);
+            bool newState = (logState != 0);
+            
+            if (newState != isLoggingEnabled) {
+                isLoggingEnabled = newState;
+                if (isLoggingEnabled) {
+                    initLog();
+                    logMsg("Logging enabled by user");
+                } else {
+                    logMsg("Logging disabled by user");
+                    closeLog();
+                }
+            }
+        }
+    }
 }
 
 void retryConnectionHandler(int button) {
@@ -461,7 +509,6 @@ void performExit() {
 int mainEventHandler(int type, int par1, int par2) {
     switch (type) {
         case EVT_INIT:
-            initLog();
             i18n_init();
             initConfigItems();
             SetPanelType(PANEL_ENABLED);
@@ -562,3 +609,7 @@ int main(int argc, char *argv[]) {
     InkViewMain(mainEventHandler);
     return 0;
 }
+
+
+
+
