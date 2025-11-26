@@ -23,7 +23,6 @@ static const int PROTOCOL_VERSION = 1;
 enum LogLevel { LOG_DEBUG, LOG_INFO, LOG_ERROR };
 
 static void logProto(LogLevel level, const char* fmt, ...) {
-    // ОПТИМИЗАЦИЯ: Игнорируем DEBUG логи, чтобы не насиловать диск
     if (level == LOG_DEBUG) return; 
 
     FILE* f = fopen("/mnt/ext1/system/calibre-connect.log", "a");
@@ -1175,10 +1174,24 @@ bool CalibreProtocol::handleNoop(json_object* args) {
     }
     
 	if (json_object_object_get_ex(args, "priKey", &val)) {
-        return true; 
-    }
-    
-    if (json_object_object_get_ex(args, "count", &val)) {
+        int index = json_object_get_int(val);
+        // logProto(LOG_DEBUG, "Calibre requested details for book index: %d", index);
+        
+        if (index >= 0 && index < (int)sessionBooks.size()) {
+            json_object* bookJson = metadataToJson(sessionBooks[index]);
+            
+            if (sessionBooks[index].isRead) {
+                json_object_object_add(bookJson, "_is_read_", json_object_new_boolean(true));
+            }
+            
+            sendOKResponse(bookJson); // <--- ПРОБЛЕМА ЗДЕСЬ
+            freeJSON(bookJson);
+        } else {
+            logProto(LOG_ERROR, "Error: Requested priKey %d out of bounds", index);
+            json_object* resp = json_object_new_object();
+            sendOKResponse(resp);
+            freeJSON(resp);
+        }
         return true;
     }
     
