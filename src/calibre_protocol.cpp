@@ -537,16 +537,26 @@ bool CalibreProtocol::handleGetBookCount(json_object* args) {
         useCache = json_object_get_boolean(cacheObj);
     }
     
-    if (cacheManager) {
+	if (cacheManager) {
         int matched = 0;
         for (auto& book : sessionBooks) {
-            std::string cachedUuid = cacheManager->getUuidForLpath(book.lpath);
-            if (!cachedUuid.empty()) {
-                book.uuid = cachedUuid;
-                matched++;
+            BookMetadata cachedMeta;
+            if (cacheManager->getCachedMetadata(book.lpath, cachedMeta)) {
+                bool usedCache = false;
+                
+                if (!cachedMeta.uuid.empty()) {
+                    book.uuid = cachedMeta.uuid;
+                    usedCache = true;
+                }
+                
+                if (!cachedMeta.lastModified.empty()) {
+                    book.lastModified = cachedMeta.lastModified;
+                }
+                
+                if (usedCache) matched++;
             }
         }
-        logProto(LOG_INFO, "UUID Patching: %d/%d books matched in cache", matched, count);
+        logProto(LOG_INFO, "UUID & Time Patching: %d/%d books matched in cache", matched, count);
     }
     
     logProto(LOG_INFO, "GetBookCount: %d books, useCache=%d", count, useCache);
@@ -1285,6 +1295,3 @@ json_object* CalibreProtocol::cachedMetadataToJson(const BookMetadata& metadata,
     
     return obj;
 }
-
-
-
