@@ -543,9 +543,7 @@ bool BookManager::deleteBook(const std::string& lpath) {
 
 std::vector<BookMetadata> BookManager::getAllBooks() {
     std::vector<BookMetadata> books;
-    // Резервируем память заранее, чтобы избежать реалокаций
-    // Предположим среднее кол-во книг 1000
-    books.reserve(1000);
+    books.reserve(2048);
 
     sqlite3* db = openDB();
     if (!db) return books;
