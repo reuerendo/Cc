@@ -73,8 +73,7 @@ BookManager::BookManager() {
 }
 
 bool BookManager::hasSDCard() const {
-    struct stat st;
-    return (stat(SDCARDDIR, &st) == 0 && S_ISDIR(st.st_mode));
+    return IsSDinserted();
 }
 
 std::string BookManager::getSDCardPath() const {
