@@ -556,17 +556,13 @@ int mainEventHandler(int type, int par1, int par2) {
                    retryConnectionHandler);
             break;
 
-        case EVT_BOOK_RECEIVED: {
+		case EVT_BOOK_RECEIVED: {
             int count = par1;
             booksReceivedCount = count;
             
-            const char* booksWord = (count == 1) ? 
-                                    i18n_get(STR_BOOK_SINGULAR) : 
-                                    i18n_get(STR_BOOKS_PLURAL);
-            
             char statusBuffer[128];
-            snprintf(statusBuffer, sizeof(statusBuffer), "%s (%d %s)",
-                     i18n_get(STR_RECEIVING), count, booksWord);
+            snprintf(statusBuffer, sizeof(statusBuffer), "%s (%d)",
+                     i18n_get(STR_RECEIVING), count);
             updateConnectionStatus(statusBuffer);
             SoftUpdate();
             break;
@@ -576,17 +572,11 @@ int mainEventHandler(int type, int par1, int par2) {
             int count = par1;
             
             if (count > 0) {
-                const char* booksWord = (count == 1) ? 
-                                        i18n_get(STR_BOOK_SINGULAR) : 
-                                        i18n_get(STR_BOOKS_PLURAL);
-                
                 char msgBuffer[256];
                 snprintf(msgBuffer, sizeof(msgBuffer),
-                         "%s.\n%s: %d %s.",
-                         i18n_get(STR_BATCH_SYNC_FINISHED),
-                         i18n_get(STR_TOTAL_RECEIVED),
-                         count,
-                         booksWord);
+                         "%s: %d",
+                         i18n_get(STR_BOOKS_RECEIVED),
+                         count);
                 
                 Message(ICON_INFORMATION, i18n_get(STR_SYNC_COMPLETE), msgBuffer, 4000);
             }
