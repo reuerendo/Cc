@@ -18,9 +18,7 @@ static const char* translations[][STR_COUNT] = {
         "Connected",                       // STR_CONNECTED
         "Disconnected",                    // STR_DISCONNECTED
         "Sync Complete",                   // STR_SYNC_COMPLETE
-        "Batch sync finished",             // STR_BATCH_SYNC_FINISHED
-        "book",                            // STR_BOOK_SINGULAR
-        "books",                           // STR_BOOKS_PLURAL
+        "Books received",                  // STR_BOOKS_RECEIVED
         "Receiving...",                    // STR_RECEIVING
         "Connected (Idle)",                // STR_CONNECTED_IDLE
         "Cancel",                          // STR_CANCEL
@@ -47,9 +45,7 @@ static const char* translations[][STR_COUNT] = {
         "Подключено",                      // STR_CONNECTED
         "Отключено",                       // STR_DISCONNECTED
         "Синхронизация завершена",         // STR_SYNC_COMPLETE
-        "Пакетная синхронизация завершена", // STR_BATCH_SYNC_FINISHED
-        "книга",                           // STR_BOOK_SINGULAR
-        "книг",                            // STR_BOOKS_PLURAL
+        "Получено книг",                   // STR_BOOKS_RECEIVED
         "Получение...",                    // STR_RECEIVING
         "Подключено (ожидание)",           // STR_CONNECTED_IDLE
         "Отмена",                          // STR_CANCEL
@@ -76,9 +72,7 @@ static const char* translations[][STR_COUNT] = {
         "Підключено",                      // STR_CONNECTED
         "Відключено",                      // STR_DISCONNECTED
         "Синхронізація завершена",         // STR_SYNC_COMPLETE
-        "Пакетну синхронізацію завершено", // STR_BATCH_SYNC_FINISHED
-        "книга",                           // STR_BOOK_SINGULAR
-        "книг",                            // STR_BOOKS_PLURAL
+        "Отримано книг ",                   // STR_BOOKS_RECEIVED
         "Отримання...",                    // STR_RECEIVING
         "Підключено (очікування)",         // STR_CONNECTED_IDLE
         "Скасувати",                       // STR_CANCEL
@@ -89,7 +83,7 @@ static const char* translations[][STR_COUNT] = {
         "Не вдалося підключитися до WiFi мережі", // STR_WIFI_CONNECT_FAILED
         "Всього отримано",                 // STR_TOTAL_RECEIVED
         "Вимк",                            // STR_OFF
-        "Увімк"                            // STR_ON
+        "Увімкн"                           // STR_ON
     },
     // Spanish
     {
@@ -105,9 +99,7 @@ static const char* translations[][STR_COUNT] = {
         "Conectado",                       // STR_CONNECTED
         "Desconectado",                    // STR_DISCONNECTED
         "Sincronización completa",         // STR_SYNC_COMPLETE
-        "Sincronización por lotes finalizada", // STR_BATCH_SYNC_FINISHED
-        "libro",                           // STR_BOOK_SINGULAR
-        "libros",                          // STR_BOOKS_PLURAL
+        "Libros recibidos",                // STR_BOOKS_RECEIVED
         "Recibiendo...",                   // STR_RECEIVING
         "Conectado (inactivo)",            // STR_CONNECTED_IDLE
         "Cancelar",                        // STR_CANCEL
