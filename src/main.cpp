@@ -32,6 +32,9 @@
 
 #define MAX_LOG_SIZE (256 * 1024)
 
+#define SWITCH_COLOR_GRAY  0x787878
+#define SWITCH_COLOR_WHITE 0xFFFFFF
+
 // --- Logging System (Thread Safe) ---
 static std::atomic<bool> isLoggingEnabled(false);
 static FILE* logFile = NULL;
@@ -90,6 +93,113 @@ void closeLog() {
         fclose(logFile);
         logFile = NULL;
     }
+}
+
+// Вспомогательная функция для рисования капсулы (pill shape)
+void DrawPill(int x, int y, int w, int h, int color) {
+    int radius = h / 2;
+    // Левый круг
+    FillArea(x + radius, y + radius, radius, radius, color); // В InkView FillArea может быть прямоугольным, лучше использовать круги
+    DrawCircle(x + radius, y + radius, radius, color);
+    
+    // Правый круг
+    DrawCircle(x + w - radius, y + radius, radius, color);
+    
+    // Середина
+    FillArea(x + radius, y, w - 2 * radius, h + 1, color); // +1 для перекрытия швов
+    
+    // Закрашиваем внутренности кругов (DrawCircle рисует только контур в некоторых версиях, 
+    // но если FillArea не сработает эстетично, используем толстые линии или повтор. 
+    // В InkView DrawCircle обычно заполненный, если нет - используем FillArea).
+    // Для надежности в InkView лучше рисовать "гантелю" из двух кругов и прямоугольника.
+}
+
+// Функция генерации битмапа переключателя
+// width/height - желаемый размер (например, 84x36 для половины от SVG, или 169x72 как в оригинале)
+// state: 0 = OFF, 1 = ON
+ibitmap* CreateSwitchBitmap(int width, int height, int state) {
+    // 1. Создаем пустой битмап
+    ibitmap* bmp = NewBitmap(width, height);
+    if (!bmp) return NULL;
+
+    // 2. Сохраняем текущий холст (экран)
+    icanvas* old_canvas = GetCanvas();
+
+    // 3. Создаем временный холст, указывающий на наш битмап
+    icanvas new_canvas;
+    new_canvas.addr = (unsigned char*)bmp->data;
+    new_canvas.width = bmp->width;
+    new_canvas.height = bmp->height;
+    new_canvas.scanline = bmp->scanline;
+    new_canvas.depth = bmp->depth;
+    
+    // Настраиваем клипирование по полному размеру
+    new_canvas.clipx1 = 0;
+    new_canvas.clipy1 = 0;
+    new_canvas.clipx2 = width;
+    new_canvas.clipy2 = height;
+
+    // 4. Переключаемся на рисование в память
+    SetCanvas(&new_canvas);
+
+    // --- НАЧАЛО РИСОВАНИЯ (Логика SVG) ---
+
+    // Очищаем фон (прозрачный или белый, для меню лучше белый, если фон меню белый)
+    FillArea(0, 0, width, height, SWITCH_COLOR_WHITE);
+
+    // Параметры (масштабируем толщину линий под размер)
+    int border_thickness = 2; // Толщина обводки
+    int padding = 2;          // Отступ внутри
+
+    // 1. Рисуем внешний контур (Серый)
+    // Рисуем большую серую капсулу
+    int r = height / 2;
+    DrawCircle(r, r, r, SWITCH_COLOR_GRAY);         // Лево
+    DrawCircle(width - r, r, r, SWITCH_COLOR_GRAY); // Право
+    FillArea(r, 0, width - 2*r, height, SWITCH_COLOR_GRAY); // Центр
+
+    // 2. Рисуем внутреннюю часть (Белую), чтобы получилась обводка
+    // Уменьшаем размеры на толщину рамки
+    int r_in = r - border_thickness;
+    DrawCircle(r, r, r_in, SWITCH_COLOR_WHITE);             
+    DrawCircle(width - r, r, r_in, SWITCH_COLOR_WHITE);     
+    FillArea(r, border_thickness, width - 2*r, height - 2*border_thickness, SWITCH_COLOR_WHITE);
+
+    // 3. Рисуем "рычажок" (Knob) - Серый круг
+    int knob_radius = r - padding - border_thickness;
+    int knob_y = r;
+    int knob_x;
+
+    if (state == 0) { // OFF - слева
+        knob_x = r; 
+    } else {          // ON - справа
+        knob_x = width - r;
+    }
+    DrawCircle(knob_x, knob_y, knob_radius, SWITCH_COLOR_GRAY);
+
+    // 4. Рисуем Текст ("on" или "off")
+    ifont* font = OpenFont(DEFAULTFONT, height / 2, 0); // Шрифт высотой в пол-кнопки
+    SetFont(font, SWITCH_COLOR_GRAY);
+
+    if (state == 0) {
+        // Текст "off" справа
+        int text_x = width - r + (r/2); // Примерно
+        // Вычисляем точно центр свободного пространства
+        int free_space_center = r + (width - 2*r)/2 + r/2; 
+        DrawString(width/2 + r/4, height/4, "off"); 
+    } else {
+        // Текст "on" слева
+        DrawString(r/2, height/4, "on");
+    }
+    
+    CloseFont(font);
+
+    // --- КОНЕЦ РИСОВАНИЯ ---
+
+    // 5. Возвращаем холст обратно на экран
+    SetCanvas(old_canvas);
+
+    return bmp;
 }
 
 // --- Global Config ---
@@ -154,11 +264,30 @@ void startConnection();
 // Config editor structure
 static iconfigedit* configItems = NULL;
 
+static ibitmap *switch_theme[3];
+
 void initConfigItems() {
-	
-	CHECKBOX_VARIANTS[0] = i18n_get(STR_OFF);
+    
+    // Генерируем иконки программно
+    // Размер 84x36 - это в 2 раза меньше вашего SVG (169x72), 
+    // оптимально для строк меню на большинстве ридеров.
+    // Можете поставить 100x42 или 120x50 по вкусу.
+    ibitmap* bmp_off = CreateSwitchBitmap(84, 36, 0);
+    ibitmap* bmp_on  = CreateSwitchBitmap(84, 36, 1);
+
+    // Заполняем массив темы
+    switch_theme[0] = bmp_off;
+    switch_theme[1] = bmp_on;
+    switch_theme[2] = NULL;
+    
+    // Варианты текста (можно оставить NULL, если иконка понятна сама по себе, 
+    // но структура требует массив)
+    CHECKBOX_VARIANTS[0] = i18n_get(STR_OFF); 
     CHECKBOX_VARIANTS[1] = i18n_get(STR_ON);
-    CHECKBOX_VARIANTS[2] = NULL; // Terminator
+    CHECKBOX_VARIANTS[2] = NULL; 
+
+    // ... инициализация configItems ...
+    configItems = (iconfigedit*)calloc(8, sizeof(iconfigedit));
 	
     // Using calloc to ensure C-compatibility for InkView API
     configItems = (iconfigedit*)calloc(8, sizeof(iconfigedit));
@@ -199,7 +328,9 @@ void initConfigItems() {
     configItems[6].deflt = (char*)DEFAULT_ENABLE_LOG;
     configItems[6].variants = (char**)CHECKBOX_VARIANTS;
     
-    // Terminator
+	// Привязываем сгенерированную тему
+    configItems[6].icon_theme = switch_theme;
+    
     configItems[7].type = 0;
 }
 
@@ -211,6 +342,9 @@ void freeConfigItems() {
         free(configItems);
         configItems = NULL;
     }
+	// Очистка сгенерированных битмапов
+    if (switch_theme[0]) free(switch_theme[0]);
+    if (switch_theme[1]) free(switch_theme[1]);
 }
 
 void notifyConnectionFailed(const char* errorMsg) {
