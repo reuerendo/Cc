@@ -5,6 +5,7 @@ An application for wireless transfer of books from Calibre to PocketBook[^1] dev
 Place the file `connect-to-calibre.app` in the `/applications` folder on your PocketBook device. If desired, also copy the `/icons` folder ([instructions on how to assign an application icon](https://github.com/jjrrw174/PocketBook-Desktop-and-App-Customizations)).
 ## Usage
 Launch Calibre first, then run `connect-to-calibre.app`. The application will automatically connect to Calibre upon startup.
+When you first connect, scanning your device's library will take a few minutes. On subsequent connections, the app will rely on the cache and become significantly faster.
 ## Read status and Favorite
 The app also supports read status and favorite marking. In the settings, you need to specify the lookup name for the `Read`, `Read Date`, and `Favorite` columns. `Read` and `Favorite` columns should be of the `yes/no` type.
 ## Collections
