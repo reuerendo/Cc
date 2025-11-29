@@ -325,8 +325,8 @@ bool BookManager::addBook(const BookMetadata& metadata) {
     int storageId = getStorageId(fullPath);
     time_t now = time(NULL);
     
-    if (batchTimestamp == 0) {
-        batchTimestamp = now;
+    if (currentBatchTimestamp == 0) {
+        currentBatchTimestamp = now;
     }
 
     sqlite3_exec(db, "BEGIN TRANSACTION", NULL, NULL, NULL);
@@ -410,7 +410,7 @@ bool BookManager::addBook(const BookMetadata& metadata) {
             sqlite3_bind_text(stmt, 10, metadata.title.c_str(), -1, SQLITE_STATIC);
             sqlite3_bind_int(stmt, 11, 0);
             sqlite3_bind_int(stmt, 12, 0);
-            sqlite3_bind_int64(stmt, 13, batchTimestamp); // ИСПОЛЬЗУЕМ ФИКСИРОВАННОЕ ВРЕМЯ СЕССИИ
+            sqlite3_bind_int64(stmt, 13, currentBatchTimestamp);
             sqlite3_bind_int(stmt, 14, 0);
             
             if (sqlite3_step(stmt) == SQLITE_DONE) {
