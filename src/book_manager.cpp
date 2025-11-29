@@ -385,7 +385,7 @@ bool BookManager::addBook(const BookMetadata& metadata) {
             sqlite3_bind_text(stmt, 9, metadata.isbn.c_str(), -1, SQLITE_STATIC);
             sqlite3_bind_text(stmt, 10, metadata.title.c_str(), -1, SQLITE_STATIC);
             sqlite3_bind_int64(stmt, 11, now);
-            sqlite3_bind_int64(stmt, 12, batchTimestamp);
+            sqlite3_bind_int64(stmt, 12, currentBatchTimestamp);
             sqlite3_bind_int(stmt, 13, bookId);
             
             sqlite3_step(stmt);
