@@ -964,7 +964,7 @@ void CalibreProtocol::generateCoverCache(const std::string& filePath) {
     if (cover) {
         int result = CoverCachePut(CCS_FBREADER, filePath.c_str(), cover);
         
-        if (result == 1) { // CoverCachePut возвращает 1 при успехе (обычно MSG_OK)
+        if (result == 1) {
             logProto(LOG_DEBUG, "Cover cache created successfully");
         } else {
             logProto(LOG_ERROR, "Failed to put cover into cache, code: %d", result);
@@ -976,35 +976,6 @@ void CalibreProtocol::generateCoverCache(const std::string& filePath) {
     }
 
     BookReady(filePath.c_str());
-}
-
-void CalibreProtocol::coverCacheWorker(void* context) {
-    CoverCacheTask* task = static_cast<CoverCacheTask*>(context);
-    
-    // Generate cover with standard dimensions
-    ibitmap* cover = GetBookCover(task->filePath.c_str(), 
-                                  COVER_HEIGHT * 2/3,  // width (aspect ratio 2:3)
-                                  COVER_HEIGHT);
-    
-    if (cover) {
-        // Store in Adobe reader cache (most universal)
-        int result = CoverCachePut(CCS_ADOBE, task->filePath.c_str(), cover);
-        
-        if (result == 0) {
-            logProto(LOG_DEBUG, "Cover cache created for: %s", 
-                    task->filePath.c_str());
-        } else {
-            logProto(LOG_ERROR, "Failed to cache cover for: %s", 
-                    task->filePath.c_str());
-        }
-        
-        free(cover);
-    } else {
-        logProto(LOG_DEBUG, "No cover found for: %s", task->filePath.c_str());
-    }
-    
-    delete task;
-    return;
 }
 
 bool CalibreProtocol::handleSendBook(json_object* args) {
