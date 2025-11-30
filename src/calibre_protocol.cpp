@@ -122,7 +122,7 @@ CalibreProtocol::CalibreProtocol(NetworkManager* net, BookManager* bookMgr,
       connected(false),
       readColumn(readCol), readDateColumn(readDateCol), favoriteColumn(favCol),
       currentBookLength(0), currentBookReceived(0), currentBookFile(nullptr),
-      booksReceivedInSession(0) {
+      booksReceivedInSession(0), lastBatchCount(0) {
     
     const char* model = GetDeviceModel();
     if (model && strlen(model) > 0) {
@@ -131,7 +131,7 @@ CalibreProtocol::CalibreProtocol(NetworkManager* net, BookManager* bookMgr,
         deviceName = "PocketBook Device";
     }
     
-    appVersion = "1.0.2";
+    appVersion = "1.0.1";
     
     logProto(LOG_INFO, "Device name: %s", deviceName.c_str());
 }
@@ -371,7 +371,7 @@ void CalibreProtocol::handleMessages(std::function<void(const std::string&)> sta
                 statusCallback("Received device info");
                 break;
                 
-            case CARD_PREFIX:  // НОВЫЙ CASE
+            case CARD_PREFIX:
                 handlerSuccess = handleCardPrefix(args);
                 statusCallback("Sent card info");
                 break;
@@ -403,6 +403,7 @@ void CalibreProtocol::handleMessages(std::function<void(const std::string&)> sta
                 
                 int newBooks = booksReceivedInSession - lastBooklistCount;
                 if (newBooks > 0) {
+                    lastBatchCount = newBooks; // Сохраняем кол-во книг именно в этой партии
                     logProto(LOG_INFO, "Book transfer batch complete: %d new books", newBooks);
                     statusCallback("BATCH_COMPLETE");
                     lastBooklistCount = booksReceivedInSession;
@@ -582,9 +583,6 @@ bool CalibreProtocol::handleGetBookCount(json_object* args) {
             sessionBooks.push_back(book);
         }
     }
-    
-    // Reset books counter at the start of a new book transfer batch
-    booksReceivedInSession = 0;
     
     int count = sessionBooks.size();
     
